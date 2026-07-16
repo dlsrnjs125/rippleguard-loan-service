@@ -1,0 +1,48 @@
+spring:
+  application:
+    name: rippleguard-loan-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/rippleguard_loan}
+    username: ${DB_USERNAME:rippleguard}
+    password: ${DB_PASSWORD:rippleguard}
+  flyway:
+    enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP:rippleguard-loan-service}
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when_authorized
+  health:
+    kafka:
+      enabled: true
+
+rippleguard:
+  contracts:
+    repository: dlsrnjs125/rippleguard-contracts
+    commit: 29f6c348fd93633476438ee36b3f93a3d036e165
+    event-schema-version: 1.1.0
+  kafka:
+    enabled: ${LOAN_KAFKA_ENABLED:true}
+    topic: ${LOAN_KAFKA_TOPIC:rippleguard.events}
+  outbox:
+    batch-size: ${OUTBOX_BATCH_SIZE:50}
