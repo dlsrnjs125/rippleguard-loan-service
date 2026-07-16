@@ -6,9 +6,9 @@ import dev.rippleguard.loan.infrastructure.persistence.OutboxEventRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -32,16 +32,14 @@ public class OutboxPublisher {
                            KafkaTemplate<String, String> kafka,
                            Clock clock,
                            TransactionTemplate transactions,
-                           @Value("${rippleguard.outbox.batch-size}") int batchSize,
-                           @Value("${rippleguard.outbox.lease-seconds}") long leaseSeconds,
-                           @Value("${rippleguard.outbox.instance-id}") String instanceId) {
+                           OutboxProperties properties) {
         this.outbox = outbox;
         this.kafka = kafka;
         this.clock = clock;
         this.transactions = transactions;
-        this.batchSize = batchSize;
-        this.leaseSeconds = leaseSeconds;
-        this.instanceId = instanceId;
+        this.batchSize = properties.batchSize();
+        this.leaseSeconds = properties.leaseSeconds();
+        this.instanceId = properties.instanceId();
     }
 
     @Scheduled(fixedDelayString = "${OUTBOX_PUBLISHER_DELAY_MS:5000}")
@@ -65,22 +63,30 @@ public class OutboxPublisher {
             Instant now = clock.instant();
             List<OutboxEventEntity> events = outbox.findClaimable(now, batchSize);
             Instant leaseUntil = now.plusSeconds(leaseSeconds);
-            events.forEach(event -> event.markProcessing(now, leaseUntil, instanceId));
+            events.forEach(event -> event.markProcessing(now, leaseUntil, instanceId, UUID.randomUUID()));
             return List.copyOf(events);
         });
     }
 
     private void markPublished(OutboxEventEntity event) {
         transactions.executeWithoutResult(status -> {
-            OutboxEventEntity managed = outbox.findById(event.getEventId()).orElseThrow();
-            managed.markPublished(clock.instant());
+            int updated = outbox.markPublishedIfClaimed(event.getEventId(), event.getClaimToken(), clock.instant());
+            if (updated == 0) {
+                log.info("Skipped stale outbox publish result eventId={} claimToken={}",
+                        event.getEventId(), event.getClaimToken());
+            }
         });
     }
 
     private void markFailed(OutboxEventEntity event) {
         transactions.executeWithoutResult(status -> {
-            OutboxEventEntity managed = outbox.findById(event.getEventId()).orElseThrow();
-            managed.markFailed(clock.instant());
+            Instant now = clock.instant();
+            Instant nextAttemptAt = now.plusSeconds(Math.min(300, 5L * (event.getAttempts() + 1)));
+            int updated = outbox.markFailedIfClaimed(event.getEventId(), event.getClaimToken(), now, nextAttemptAt);
+            if (updated == 0) {
+                log.info("Skipped stale outbox failure result eventId={} claimToken={}",
+                        event.getEventId(), event.getClaimToken());
+            }
         });
     }
 }

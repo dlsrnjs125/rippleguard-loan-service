@@ -4,6 +4,8 @@ import dev.rippleguard.loan.domain.FinalDecision;
 import dev.rippleguard.loan.domain.LoanApplicationStatus;
 import dev.rippleguard.loan.infrastructure.persistence.FinancialSnapshotEntity;
 import dev.rippleguard.loan.infrastructure.persistence.FinancialSnapshotRepository;
+import dev.rippleguard.loan.infrastructure.persistence.EvidenceUpdateRequestEntity;
+import dev.rippleguard.loan.infrastructure.persistence.EvidenceUpdateRequestRepository;
 import dev.rippleguard.loan.infrastructure.persistence.InboxEventEntity;
 import dev.rippleguard.loan.infrastructure.persistence.InboxEventRepository;
 import dev.rippleguard.loan.infrastructure.persistence.LoanApplicationEntity;
@@ -37,43 +39,46 @@ public class LoanApplicationService {
     private final LoanApplicationRepository applications;
     private final FinancialSnapshotRepository snapshots;
     private final MonthlyIncomeRepository monthlyIncomes;
+    private final EvidenceUpdateRequestRepository evidenceUpdates;
     private final LoanDecisionRepository decisions;
     private final InboxEventRepository inbox;
     private final OutboxEventRepository outbox;
+    private final LoanApplicationCreationTransactions creationTransactions;
     private final JsonSupport json;
     private final Clock clock;
 
     public LoanApplicationService(LoanApplicationRepository applications,
                                   FinancialSnapshotRepository snapshots,
                                   MonthlyIncomeRepository monthlyIncomes,
+                                  EvidenceUpdateRequestRepository evidenceUpdates,
                                   LoanDecisionRepository decisions,
                                   InboxEventRepository inbox,
                                   OutboxEventRepository outbox,
+                                  LoanApplicationCreationTransactions creationTransactions,
                                   JsonSupport json,
                                   Clock clock) {
         this.applications = applications;
         this.snapshots = snapshots;
         this.monthlyIncomes = monthlyIncomes;
+        this.evidenceUpdates = evidenceUpdates;
         this.decisions = decisions;
         this.inbox = inbox;
         this.outbox = outbox;
+        this.creationTransactions = creationTransactions;
         this.json = json;
         this.clock = clock;
     }
 
-    @Transactional
     public LoanApplicationResponse create(LoanApplicationCreateRequest request) {
         String canonicalPayload = json.canonicalJson(request);
         String requestHash = json.sha256(canonicalPayload);
 
-        return applications.findByIdempotencyKey(request.idempotencyKey())
-                .map(existing -> existingIdempotentResponse(existing, requestHash))
+        return creationTransactions.findExisting(request.idempotencyKey(), requestHash)
                 .orElseGet(() -> {
                     try {
-                        return createNewApplication(request, canonicalPayload, requestHash);
+                        return creationTransactions.createNew(request, requestHash);
                     } catch (DataIntegrityViolationException concurrentInsert) {
-                        return applications.findByIdempotencyKey(request.idempotencyKey())
-                                .map(existing -> existingIdempotentResponse(existing, requestHash))
+                        return creationTransactions.findExisting(request.idempotencyKey(), requestHash)
                                 .orElseThrow(() -> concurrentInsert);
                     }
                 });
@@ -166,6 +171,20 @@ public class LoanApplicationService {
         if (command.evidenceRefs() == null || command.evidenceRefs().isEmpty()) {
             throw new IllegalArgumentException("Evidence update requires at least one evidenceRef");
         }
+        validateEvidenceRequestCausation(command);
+
+        String requestHash = json.sha256(json.canonicalJson(Map.of(
+                "command", command,
+                "snapshot", evidenceSnapshot
+        )));
+        var existingUpdate = evidenceUpdates.findById(command.causationId());
+        if (existingUpdate.isPresent()) {
+            EvidenceUpdateRequestEntity existing = existingUpdate.get();
+            if (!existing.getApplicationId().equals(command.applicationId()) || !existing.getRequestHash().equals(requestHash)) {
+                throw new ConflictException("Evidence request was already processed with a different payload");
+            }
+            return get(command.applicationId());
+        }
 
         LoanApplicationEntity application = loadForUpdate(command.applicationId());
         if (application.getStatus() != LoanApplicationStatus.EVIDENCE_REQUIRED) {
@@ -178,28 +197,16 @@ public class LoanApplicationService {
         storeSnapshot(application, nextSnapshotVersion, evidenceSnapshot, now);
 
         transition(application, LoanApplicationStatus.UNDER_GOVERNANCE_REVIEW);
+        evidenceUpdates.save(new EvidenceUpdateRequestEntity(
+                command.causationId(),
+                application.getApplicationId(),
+                requestHash,
+                nextSnapshotVersion,
+                now
+        ));
         outbox.save(evidenceUpdatedEvent(application.getApplicationId(), command, nextSnapshotVersion, now));
         log.info("Evidence updated applicationId={} snapshotVersion={}",
                 application.getApplicationId(), nextSnapshotVersion);
-        return toResponse(application);
-    }
-
-    private LoanApplicationResponse createNewApplication(LoanApplicationCreateRequest request, String canonicalPayload, String requestHash) {
-        Instant now = clock.instant();
-        UUID applicationId = UUID.randomUUID();
-        LoanApplicationEntity application = applications.saveAndFlush(new LoanApplicationEntity(
-                applicationId,
-                request.idempotencyKey(),
-                requestHash,
-                money(request.requestedAmount()),
-                request.currency(),
-                request.applicantReference(),
-                now
-        ));
-
-        storeSnapshot(application, 1, FinancialSnapshotInput.fromCreateRequest(request), now);
-
-        outbox.save(submittedEvent(applicationId, request, now));
         return toResponse(application);
     }
 
@@ -237,16 +244,23 @@ public class LoanApplicationService {
         return snapshot;
     }
 
-    private LoanApplicationResponse existingIdempotentResponse(LoanApplicationEntity existing, String requestHash) {
-        if (!existing.getRequestHash().equals(requestHash)) {
-            throw new ConflictException("Idempotency key was reused with a different payload");
-        }
-        return toResponse(existing);
-    }
-
     private LoanApplicationEntity loadForUpdate(UUID applicationId) {
         return applications.findWithLockByApplicationId(applicationId)
                 .orElseThrow(() -> new NotFoundException("Loan application not found: " + applicationId));
+    }
+
+    private void validateEvidenceRequestCausation(EvidenceUpdateCommand command) {
+        InboxEventEntity cause = inbox.findById(command.causationId())
+                .orElseThrow(() -> new IllegalArgumentException("Evidence update causationId was not received"));
+        if (!"governance.evidence.requested.v1".equals(cause.getEventType())) {
+            throw new IllegalArgumentException("Evidence update causationId must reference governance.evidence.requested.v1");
+        }
+        if (!command.applicationId().equals(cause.getApplicationId())) {
+            throw new IllegalArgumentException("Evidence update applicationId does not match evidence request");
+        }
+        if (!command.decisionCaseId().equals(cause.getCaseId())) {
+            throw new IllegalArgumentException("Evidence update decisionCaseId does not match evidence request");
+        }
     }
 
     private void transition(LoanApplicationEntity application, LoanApplicationStatus target) {
@@ -307,6 +321,8 @@ public class LoanApplicationService {
                     event.eventId(),
                     event.eventType(),
                     commandId,
+                    event.applicationId(),
+                    event.caseId(),
                     json.sha256(event.payload().toString()),
                     clock.instant()
             ));
@@ -323,30 +339,6 @@ public class LoanApplicationService {
                 throw new ConflictException("Application already has a different decision command");
             }
         });
-    }
-
-    private OutboxEventEntity submittedEvent(UUID applicationId, LoanApplicationCreateRequest request, Instant now) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("applicationId", applicationId.toString());
-        payload.put("applicantId", request.applicantReference());
-        payload.put("inputSnapshotVersion", "snapshot-v1");
-        payload.put("submittedAt", now.toString());
-        payload.put("submissionChannel", "PARTNER_API");
-
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("eventId", UUID.randomUUID().toString());
-        envelope.put("eventType", "loan.application.submitted.v1");
-        envelope.put("schemaVersion", EVENT_SCHEMA_VERSION);
-        envelope.put("occurredAt", now.toString());
-        envelope.put("producer", "loan-service");
-        envelope.put("applicationId", applicationId.toString());
-        envelope.put("caseId", applicationId.toString());
-        envelope.put("evaluationRunId", null);
-        envelope.put("correlationId", applicationId.toString());
-        envelope.put("causationId", null);
-        envelope.put("payload", payload);
-
-        return event("loan.application.submitted.v1", applicationId, applicationId.toString(), null, envelope, now);
     }
 
     private OutboxEventEntity finalizedEvent(UUID applicationId, EventEnvelope cause, DecisionCommandPayload command, Instant now) {

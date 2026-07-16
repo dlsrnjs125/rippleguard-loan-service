@@ -92,6 +92,7 @@ create table outbox_event (
     processing_started_at timestamp with time zone,
     lease_until timestamp with time zone,
     claimed_by varchar(128),
+    claim_token uuid,
     published_at timestamp with time zone,
     created_at timestamp with time zone not null,
     updated_at timestamp with time zone not null,
@@ -106,6 +107,17 @@ create table inbox_event (
     event_id uuid primary key,
     event_type varchar(128) not null,
     command_id uuid unique,
+    application_id uuid,
+    case_id varchar(128),
     payload_hash varchar(64) not null,
     processed_at timestamp with time zone not null
+);
+
+create table evidence_update_request (
+    evidence_request_event_id uuid primary key,
+    application_id uuid not null references loan_application(application_id),
+    request_hash varchar(64) not null,
+    snapshot_version integer not null,
+    processed_at timestamp with time zone not null,
+    constraint ck_evidence_update_snapshot_version check (snapshot_version > 0)
 );

@@ -9,13 +9,13 @@ import static org.mockito.Mockito.when;
 
 import dev.rippleguard.loan.domain.OutboxStatus;
 import dev.rippleguard.loan.infrastructure.kafka.OutboxPublisher;
+import dev.rippleguard.loan.infrastructure.kafka.OutboxProperties;
 import dev.rippleguard.loan.infrastructure.persistence.OutboxEventEntity;
 import dev.rippleguard.loan.infrastructure.persistence.OutboxEventRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
@@ -34,15 +34,16 @@ class OutboxPublisherTest {
         OutboxEventEntity event = event("loan.application.submitted.v1");
         givenTransactionsExecuteCallbacks();
         when(outbox.findClaimable(clock.instant(), 10)).thenReturn(List.of(event));
-        when(outbox.findById(event.getEventId())).thenReturn(Optional.of(event));
         when(kafka.send(event.getEventType(), event.getAggregateId().toString(), event.getPayload()))
                 .thenReturn(CompletableFuture.completedFuture(null));
+        when(outbox.markPublishedIfClaimed(any(), any(), any())).thenReturn(1);
 
         publisher().publishPending();
 
         verify(kafka).send(event.getEventType(), event.getAggregateId().toString(), event.getPayload());
-        assertThat(event.getStatus()).isEqualTo(OutboxStatus.PUBLISHED);
-        assertThat(event.getClaimedBy()).isNull();
+        verify(outbox).markPublishedIfClaimed(event.getEventId(), event.getClaimToken(), clock.instant());
+        assertThat(event.getStatus()).isEqualTo(OutboxStatus.PROCESSING);
+        assertThat(event.getClaimToken()).isNotNull();
     }
 
     @Test
@@ -50,15 +51,19 @@ class OutboxPublisherTest {
         OutboxEventEntity event = event("loan.decision.finalized.v1");
         givenTransactionsExecuteCallbacks();
         when(outbox.findClaimable(clock.instant(), 10)).thenReturn(List.of(event));
-        when(outbox.findById(event.getEventId())).thenReturn(Optional.of(event));
         when(kafka.send(event.getEventType(), event.getAggregateId().toString(), event.getPayload()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("kafka unavailable")));
+        when(outbox.markFailedIfClaimed(any(), any(), any(), any())).thenReturn(1);
 
         publisher().publishPending();
 
-        assertThat(event.getStatus()).isEqualTo(OutboxStatus.FAILED);
-        assertThat(event.getAttempts()).isEqualTo(1);
-        assertThat(event.getClaimedBy()).isNull();
+        verify(outbox).markFailedIfClaimed(
+                event.getEventId(),
+                event.getClaimToken(),
+                clock.instant(),
+                clock.instant().plusSeconds(5)
+        );
+        assertThat(event.getStatus()).isEqualTo(OutboxStatus.PROCESSING);
     }
 
     @Test
@@ -66,18 +71,19 @@ class OutboxPublisherTest {
         OutboxEventEntity event = event("loan.evidence.updated.v1");
         givenTransactionsExecuteCallbacks();
         when(outbox.findClaimable(clock.instant(), 10)).thenReturn(List.of(event));
-        when(outbox.findById(event.getEventId())).thenReturn(Optional.of(event));
         when(kafka.send(event.getEventType(), event.getAggregateId().toString(), event.getPayload()))
                 .thenReturn(CompletableFuture.completedFuture(null));
+        when(outbox.markPublishedIfClaimed(any(), any(), any())).thenReturn(1);
 
         publisher().publishPending();
 
-        assertThat(event.getLeaseUntil()).isNull();
-        assertThat(event.getStatus()).isEqualTo(OutboxStatus.PUBLISHED);
+        assertThat(event.getLeaseUntil()).isEqualTo(clock.instant().plusSeconds(60));
+        assertThat(event.getStatus()).isEqualTo(OutboxStatus.PROCESSING);
+        assertThat(event.getClaimToken()).isNotNull();
     }
 
     private OutboxPublisher publisher() {
-        return new OutboxPublisher(outbox, kafka, clock, transactions, 10, 60, "test-instance");
+        return new OutboxPublisher(outbox, kafka, clock, transactions, new OutboxProperties(10, 60, "test-instance"));
     }
 
     private void givenTransactionsExecuteCallbacks() {

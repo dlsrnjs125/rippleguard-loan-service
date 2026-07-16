@@ -14,6 +14,8 @@ import dev.rippleguard.loan.domain.LoanApplicationStatus;
 import dev.rippleguard.loan.infrastructure.persistence.LoanApplicationRepository;
 import dev.rippleguard.loan.infrastructure.persistence.LoanDecisionRepository;
 import dev.rippleguard.loan.infrastructure.persistence.OutboxEventRepository;
+import dev.rippleguard.loan.infrastructure.persistence.InboxEventEntity;
+import dev.rippleguard.loan.infrastructure.persistence.InboxEventRepository;
 import dev.rippleguard.loan.interfaces.rest.LoanApplicationCreateRequest;
 import dev.rippleguard.loan.interfaces.rest.LoanApplicationResponse;
 import java.time.Instant;
@@ -21,13 +23,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 @SpringBootTest(properties = "debug=false")
-@Transactional
 class LoanApplicationServiceIntegrationTest {
     @Autowired
     LoanApplicationService service;
@@ -42,7 +44,24 @@ class LoanApplicationServiceIntegrationTest {
     LoanDecisionRepository decisions;
 
     @Autowired
+    InboxEventRepository inbox;
+
+    @Autowired
+    JdbcTemplate jdbc;
+
+    @Autowired
     ObjectMapper objectMapper;
+
+    @BeforeEach
+    void cleanDatabase() {
+        jdbc.update("delete from evidence_update_request");
+        jdbc.update("delete from monthly_income");
+        jdbc.update("delete from financial_snapshot");
+        jdbc.update("delete from loan_decision");
+        jdbc.update("delete from outbox_event");
+        jdbc.update("delete from inbox_event");
+        jdbc.update("delete from loan_application");
+    }
 
     @Test
     void createsApplicationSnapshotAndSubmittedOutboxAtomically() {
@@ -173,6 +192,31 @@ class LoanApplicationServiceIntegrationTest {
     @Test
     void evidenceUpdateRequiresEvidenceRequiredState() {
         LoanApplicationResponse created = service.create(validRequest("loan-create-010", "25000000.00"));
+        UUID evidenceRequestId = UUID.randomUUID();
+        inbox.save(new InboxEventEntity(
+                evidenceRequestId,
+                "governance.evidence.requested.v1",
+                null,
+                created.applicationId(),
+                "case-1001",
+                "0".repeat(64),
+                Instant.now()
+        ));
+
+        assertThatThrownBy(() -> service.updateEvidence(
+                new EvidenceUpdateCommand(
+                        created.applicationId(),
+                        "case-1001",
+                        evidenceRequestId,
+                        List.of("evidence://transaction-explanation/1")
+                ),
+                FinancialSnapshotInput.fromCreateRequest(validRequest("loan-evidence-010", "25000000.00"))
+        )).isInstanceOf(InvalidStateTransitionException.class);
+    }
+
+    @Test
+    void rejectsEvidenceUpdateWithUnknownCausation() {
+        LoanApplicationResponse created = service.create(validRequest("loan-create-011", "25000000.00"));
 
         assertThatThrownBy(() -> service.updateEvidence(
                 new EvidenceUpdateCommand(
@@ -181,8 +225,9 @@ class LoanApplicationServiceIntegrationTest {
                         UUID.randomUUID(),
                         List.of("evidence://transaction-explanation/1")
                 ),
-                FinancialSnapshotInput.fromCreateRequest(validRequest("loan-evidence-010", "25000000.00"))
-        )).isInstanceOf(InvalidStateTransitionException.class);
+                FinancialSnapshotInput.fromCreateRequest(validRequest("loan-evidence-011", "25000000.00"))
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("causationId was not received");
     }
 
     @Test

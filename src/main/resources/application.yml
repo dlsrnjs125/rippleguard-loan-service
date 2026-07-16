@@ -51,3 +51,5 @@ rippleguard:
     batch-size: ${OUTBOX_BATCH_SIZE:50}
     lease-seconds: ${OUTBOX_LEASE_SECONDS:60}
     instance-id: ${OUTBOX_INSTANCE_ID:${HOSTNAME:loan-service-local}}
+  internal-api:
+    service-token: ${INTERNAL_API_SERVICE_TOKEN:change-me-internal-local}

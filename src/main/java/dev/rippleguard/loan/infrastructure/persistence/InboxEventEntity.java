@@ -20,6 +20,12 @@ public class InboxEventEntity {
     @Column(name = "command_id", unique = true)
     private UUID commandId;
 
+    @Column(name = "application_id")
+    private UUID applicationId;
+
+    @Column(name = "case_id", length = 128)
+    private String caseId;
+
     @Column(name = "payload_hash", nullable = false, length = 64)
     private String payloadHash;
 
@@ -29,11 +35,26 @@ public class InboxEventEntity {
     protected InboxEventEntity() {
     }
 
-    public InboxEventEntity(UUID eventId, String eventType, UUID commandId, String payloadHash, Instant processedAt) {
+    public InboxEventEntity(UUID eventId, String eventType, UUID commandId, UUID applicationId, String caseId,
+                            String payloadHash, Instant processedAt) {
         this.eventId = eventId;
         this.eventType = eventType;
         this.commandId = commandId;
+        this.applicationId = applicationId;
+        this.caseId = caseId;
         this.payloadHash = payloadHash;
         this.processedAt = processedAt;
+    }
+
+    public String getEventType() {
+        return eventType;
+    }
+
+    public UUID getApplicationId() {
+        return applicationId;
+    }
+
+    public String getCaseId() {
+        return caseId;
     }
 }

@@ -57,6 +57,9 @@ public class OutboxEventEntity {
     @Column(name = "claimed_by", length = 128)
     private String claimedBy;
 
+    @Column(name = "claim_token")
+    private UUID claimToken;
+
     @Column(name = "published_at")
     private Instant publishedAt;
 
@@ -91,15 +94,21 @@ public class OutboxEventEntity {
         processingStartedAt = null;
         leaseUntil = null;
         claimedBy = null;
+        claimToken = null;
         updatedAt = now;
     }
 
-    public void markProcessing(Instant now, Instant leaseUntil, String claimedBy) {
+    public void markProcessing(Instant now, Instant leaseUntil, String claimedBy, UUID claimToken) {
         status = OutboxStatus.PROCESSING;
         processingStartedAt = now;
         this.leaseUntil = leaseUntil;
         this.claimedBy = claimedBy;
+        this.claimToken = claimToken;
         updatedAt = now;
+    }
+
+    public void markProcessing(Instant now, Instant leaseUntil, String claimedBy) {
+        markProcessing(now, leaseUntil, claimedBy, UUID.randomUUID());
     }
 
     public void markFailed(Instant now) {
@@ -109,6 +118,7 @@ public class OutboxEventEntity {
         processingStartedAt = null;
         leaseUntil = null;
         claimedBy = null;
+        claimToken = null;
         updatedAt = now;
     }
 
@@ -142,5 +152,9 @@ public class OutboxEventEntity {
 
     public String getClaimedBy() {
         return claimedBy;
+    }
+
+    public UUID getClaimToken() {
+        return claimToken;
     }
 }
