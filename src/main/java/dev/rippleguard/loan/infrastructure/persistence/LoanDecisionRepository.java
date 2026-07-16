@@ -8,4 +8,6 @@ public interface LoanDecisionRepository extends JpaRepository<LoanDecisionEntity
     boolean existsByCommandId(UUID commandId);
 
     boolean existsByApplicationApplicationId(UUID applicationId);
+
+    Optional<LoanDecisionEntity> findByApplicationApplicationId(UUID applicationId);
 }

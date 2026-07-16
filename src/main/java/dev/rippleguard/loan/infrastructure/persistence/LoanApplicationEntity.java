@@ -77,6 +77,12 @@ public class LoanApplicationEntity {
         updatedAt = now;
     }
 
+    public int incrementSnapshotVersion(Instant now) {
+        snapshotVersion++;
+        updatedAt = now;
+        return snapshotVersion;
+    }
+
     public UUID getApplicationId() {
         return applicationId;
     }

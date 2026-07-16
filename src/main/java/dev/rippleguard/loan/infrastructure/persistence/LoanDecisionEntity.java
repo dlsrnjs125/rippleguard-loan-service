@@ -66,4 +66,20 @@ public class LoanDecisionEntity {
         this.issuedAt = issuedAt;
         this.appliedAt = appliedAt;
     }
+
+    public UUID getCommandId() {
+        return commandId;
+    }
+
+    public UUID getDecisionId() {
+        return decisionId;
+    }
+
+    public UUID getEvaluationRunId() {
+        return evaluationRunId;
+    }
+
+    public FinalDecision getFinalDecision() {
+        return finalDecision;
+    }
 }

@@ -11,6 +11,8 @@ import jakarta.persistence.UniqueConstraint;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "financial_snapshot", uniqueConstraints = @UniqueConstraint(
@@ -70,6 +72,7 @@ public class FinancialSnapshotEntity {
     private String riskSignalReferences;
 
     @Column(name = "request_payload", nullable = false, columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
     private String requestPayload;
 
     @Column(name = "created_at", nullable = false)

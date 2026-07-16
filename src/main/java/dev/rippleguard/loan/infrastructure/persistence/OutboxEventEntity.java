@@ -9,6 +9,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "outbox_event")
@@ -33,6 +35,7 @@ public class OutboxEventEntity {
     private UUID causationId;
 
     @Column(nullable = false, columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
     private String payload;
 
     @Enumerated(EnumType.STRING)
@@ -79,6 +82,11 @@ public class OutboxEventEntity {
         updatedAt = now;
     }
 
+    public void markProcessing(Instant now) {
+        status = OutboxStatus.PROCESSING;
+        updatedAt = now;
+    }
+
     public void markFailed(Instant now) {
         attempts++;
         status = OutboxStatus.FAILED;
@@ -100,5 +108,9 @@ public class OutboxEventEntity {
 
     public String getPayload() {
         return payload;
+    }
+
+    public OutboxStatus getStatus() {
+        return status;
     }
 }

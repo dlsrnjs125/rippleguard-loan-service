@@ -10,11 +10,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Component
 @ConditionalOnProperty(prefix = "rippleguard.kafka", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -24,39 +23,56 @@ public class OutboxPublisher {
     private final OutboxEventRepository outbox;
     private final KafkaTemplate<String, String> kafka;
     private final Clock clock;
-    private final String topic;
+    private final TransactionTemplate transactions;
     private final int batchSize;
 
     public OutboxPublisher(OutboxEventRepository outbox,
                            KafkaTemplate<String, String> kafka,
                            Clock clock,
-                           @Value("${rippleguard.kafka.topic}") String topic,
+                           TransactionTemplate transactions,
                            @Value("${rippleguard.outbox.batch-size}") int batchSize) {
         this.outbox = outbox;
         this.kafka = kafka;
         this.clock = clock;
-        this.topic = topic;
+        this.transactions = transactions;
         this.batchSize = batchSize;
     }
 
     @Scheduled(fixedDelayString = "${OUTBOX_PUBLISHER_DELAY_MS:5000}")
-    @Transactional
     public void publishPending() {
-        Instant now = clock.instant();
-        List<OutboxEventEntity> events = outbox.findByStatusInAndNextAttemptAtLessThanEqualOrderByCreatedAt(
-                List.of(OutboxStatus.PENDING, OutboxStatus.FAILED),
-                now,
-                PageRequest.of(0, batchSize)
-        );
+        List<OutboxEventEntity> events = claimBatch();
         for (OutboxEventEntity event : events) {
             try {
-                kafka.send(topic, event.getAggregateId().toString(), event.getPayload()).get();
-                event.markPublished(clock.instant());
+                kafka.send(event.getEventType(), event.getAggregateId().toString(), event.getPayload()).get();
+                markPublished(event);
                 log.info("Published outbox event eventId={} eventType={}", event.getEventId(), event.getEventType());
             } catch (Exception exception) {
-                event.markFailed(clock.instant());
+                markFailed(event);
                 log.warn("Outbox publish failed eventId={} eventType={}", event.getEventId(), event.getEventType(), exception);
             }
         }
+    }
+
+    private List<OutboxEventEntity> claimBatch() {
+        return transactions.execute(status -> {
+            Instant now = clock.instant();
+            List<OutboxEventEntity> events = outbox.findClaimable(now, batchSize);
+            events.forEach(event -> event.markProcessing(now));
+            return List.copyOf(events);
+        });
+    }
+
+    private void markPublished(OutboxEventEntity event) {
+        transactions.executeWithoutResult(status -> {
+            OutboxEventEntity managed = outbox.findById(event.getEventId()).orElseThrow();
+            managed.markPublished(clock.instant());
+        });
+    }
+
+    private void markFailed(OutboxEventEntity event) {
+        transactions.executeWithoutResult(status -> {
+            OutboxEventEntity managed = outbox.findById(event.getEventId()).orElseThrow();
+            managed.markFailed(clock.instant());
+        });
     }
 }

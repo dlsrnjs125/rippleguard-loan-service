@@ -22,7 +22,11 @@ public class LoanEventConsumer {
         this.service = service;
     }
 
-    @KafkaListener(topics = "${rippleguard.kafka.topic}")
+    @KafkaListener(topics = {
+            "${rippleguard.kafka.topics.review-started}",
+            "${rippleguard.kafka.topics.evidence-requested}",
+            "${rippleguard.kafka.topics.decision-commanded}"
+    })
     public void onMessage(String message) {
         EventEnvelope event = json.fromJson(message, EventEnvelope.class);
         switch (event.eventType()) {

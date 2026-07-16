@@ -20,6 +20,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -66,13 +67,16 @@ public class LoanApplicationService {
         String requestHash = json.sha256(canonicalPayload);
 
         return applications.findByIdempotencyKey(request.idempotencyKey())
-                .map(existing -> {
-                    if (!existing.getRequestHash().equals(requestHash)) {
-                        throw new ConflictException("Idempotency key was reused with a different payload");
+                .map(existing -> existingIdempotentResponse(existing, requestHash))
+                .orElseGet(() -> {
+                    try {
+                        return createNewApplication(request, canonicalPayload, requestHash);
+                    } catch (DataIntegrityViolationException concurrentInsert) {
+                        return applications.findByIdempotencyKey(request.idempotencyKey())
+                                .map(existing -> existingIdempotentResponse(existing, requestHash))
+                                .orElseThrow(() -> concurrentInsert);
                     }
-                    return toResponse(existing);
-                })
-                .orElseGet(() -> createNewApplication(request, canonicalPayload, requestHash));
+                });
     }
 
     @Transactional(readOnly = true)
@@ -105,8 +109,9 @@ public class LoanApplicationService {
 
         UUID applicationId = event.applicationId();
         LoanApplicationEntity application = loadForUpdate(applicationId);
-        if (application.getStatus() == LoanApplicationStatus.SUBMITTED) {
-            transition(application, LoanApplicationStatus.UNDER_GOVERNANCE_REVIEW);
+        if (application.getStatus() != LoanApplicationStatus.UNDER_GOVERNANCE_REVIEW) {
+            throw new InvalidStateTransitionException(
+                    "Evidence request requires UNDER_GOVERNANCE_REVIEW status but was " + application.getStatus());
         }
         transition(application, LoanApplicationStatus.EVIDENCE_REQUIRED);
         recordInbox(event, null);
@@ -123,15 +128,10 @@ public class LoanApplicationService {
         }
 
         LoanApplicationEntity application = loadForUpdate(command.applicationId());
-        if (decisions.existsByApplicationApplicationId(command.applicationId())) {
-            recordInbox(event, command.commandId());
-            return;
-        }
-        if (application.getStatus() == LoanApplicationStatus.SUBMITTED) {
-            transition(application, LoanApplicationStatus.UNDER_GOVERNANCE_REVIEW);
-        }
-        if (application.getStatus() == LoanApplicationStatus.EVIDENCE_REQUIRED) {
-            transition(application, LoanApplicationStatus.UNDER_GOVERNANCE_REVIEW);
+        rejectConflictingDecision(command);
+        if (application.getStatus() != LoanApplicationStatus.UNDER_GOVERNANCE_REVIEW) {
+            throw new InvalidStateTransitionException(
+                    "Decision command requires UNDER_GOVERNANCE_REVIEW status but was " + application.getStatus());
         }
         transition(application, LoanApplicationStatus.DECISION_RECEIVED);
         transition(application, LoanApplicationStatus.FINALIZED);
@@ -155,10 +155,66 @@ public class LoanApplicationService {
                 command.applicationId(), command.commandId(), event.eventId());
     }
 
+    @Transactional
+    public LoanApplicationResponse updateEvidence(EvidenceUpdateCommand command, LoanApplicationCreateRequest evidenceSnapshot) {
+        if (command.applicationId() == null) {
+            throw new IllegalArgumentException("Evidence update command applicationId is required");
+        }
+        if (command.causationId() == null) {
+            throw new IllegalArgumentException("Evidence update command causationId is required");
+        }
+        if (command.evidenceRefs() == null || command.evidenceRefs().isEmpty()) {
+            throw new IllegalArgumentException("Evidence update requires at least one evidenceRef");
+        }
+
+        LoanApplicationEntity application = loadForUpdate(command.applicationId());
+        if (application.getStatus() != LoanApplicationStatus.EVIDENCE_REQUIRED) {
+            throw new InvalidStateTransitionException(
+                    "Evidence update requires EVIDENCE_REQUIRED status but was " + application.getStatus());
+        }
+
+        Instant now = clock.instant();
+        int nextSnapshotVersion = application.incrementSnapshotVersion(now);
+        String canonicalPayload = json.canonicalJson(evidenceSnapshot);
+        FinancialSnapshotEntity snapshot = snapshots.save(new FinancialSnapshotEntity(
+                UUID.randomUUID(),
+                application,
+                nextSnapshotVersion,
+                evidenceSnapshot.applicantReference(),
+                money(evidenceSnapshot.requestedAmount()),
+                evidenceSnapshot.currency(),
+                money(evidenceSnapshot.debtSummary().totalOutstandingAmount()),
+                money(evidenceSnapshot.debtSummary().monthlyPaymentAmount()),
+                evidenceSnapshot.delinquencySummary().delinquencyCount(),
+                evidenceSnapshot.delinquencySummary().daysPastDueMaximum(),
+                evidenceSnapshot.platformSettlementSummary().period(),
+                money(evidenceSnapshot.platformSettlementSummary().grossSettlementAmount()),
+                json.canonicalJson(evidenceSnapshot.debtSummary().sourceReferences()),
+                json.canonicalJson(evidenceSnapshot.delinquencySummary().sourceReferences()),
+                json.canonicalJson(evidenceSnapshot.platformSettlementSummary().sourceReferences()),
+                json.canonicalJson(evidenceSnapshot.riskSignalReferences()),
+                canonicalPayload,
+                now
+        ));
+        evidenceSnapshot.incomeHistory().forEach(income -> monthlyIncomes.save(new MonthlyIncomeEntity(
+                UUID.randomUUID(),
+                snapshot,
+                income.period(),
+                money(income.amount()),
+                income.sourceReference()
+        )));
+
+        transition(application, LoanApplicationStatus.UNDER_GOVERNANCE_REVIEW);
+        outbox.save(evidenceUpdatedEvent(application.getApplicationId(), command, nextSnapshotVersion, now));
+        log.info("Evidence updated applicationId={} snapshotVersion={}",
+                application.getApplicationId(), nextSnapshotVersion);
+        return toResponse(application);
+    }
+
     private LoanApplicationResponse createNewApplication(LoanApplicationCreateRequest request, String canonicalPayload, String requestHash) {
         Instant now = clock.instant();
         UUID applicationId = UUID.randomUUID();
-        LoanApplicationEntity application = applications.save(new LoanApplicationEntity(
+        LoanApplicationEntity application = applications.saveAndFlush(new LoanApplicationEntity(
                 applicationId,
                 request.idempotencyKey(),
                 requestHash,
@@ -201,6 +257,13 @@ public class LoanApplicationService {
         return toResponse(application);
     }
 
+    private LoanApplicationResponse existingIdempotentResponse(LoanApplicationEntity existing, String requestHash) {
+        if (!existing.getRequestHash().equals(requestHash)) {
+            throw new ConflictException("Idempotency key was reused with a different payload");
+        }
+        return toResponse(existing);
+    }
+
     private LoanApplicationEntity loadForUpdate(UUID applicationId) {
         return applications.findWithLockByApplicationId(applicationId)
                 .orElseThrow(() -> new NotFoundException("Loan application not found: " + applicationId));
@@ -217,6 +280,9 @@ public class LoanApplicationService {
     }
 
     private void validateCommandEnvelope(EventEnvelope event, DecisionCommandPayload command) {
+        if (!"governance-service".equals(event.producer())) {
+            throw new IllegalArgumentException("Decision command producer must be governance-service");
+        }
         if (!"COMPLETED".equals(command.evaluationRunStatus())) {
             throw new IllegalArgumentException("Decision command requires COMPLETED evaluationRunStatus");
         }
@@ -231,6 +297,21 @@ public class LoanApplicationService {
         }
         if (!event.evaluationRunId().equals(command.evaluationRunId())) {
             throw new IllegalArgumentException("Envelope and command evaluationRunId differ");
+        }
+        if (!event.caseId().equals(command.decisionCaseId())) {
+            throw new IllegalArgumentException("Envelope caseId and command decisionCaseId differ");
+        }
+        if (!event.applicationId().toString().equals(event.correlationId())) {
+            throw new IllegalArgumentException("Phase 1 decision command correlationId must equal applicationId");
+        }
+        if (command.reasonCodes() == null || command.reasonCodes().isEmpty()) {
+            throw new IllegalArgumentException("Decision command requires reasonCodes");
+        }
+        if (command.issuedAt() == null) {
+            throw new IllegalArgumentException("Decision command requires issuedAt");
+        }
+        if (command.idempotencyKey() == null || command.idempotencyKey().length() < 8 || command.idempotencyKey().length() > 128) {
+            throw new IllegalArgumentException("Decision command idempotencyKey length must be 8..128");
         }
     }
 
@@ -252,6 +333,16 @@ public class LoanApplicationService {
         } catch (DataIntegrityViolationException ignoredDuplicate) {
             log.info("Duplicate inbox event ignored eventId={} commandId={}", event.eventId(), commandId);
         }
+    }
+
+    private void rejectConflictingDecision(DecisionCommandPayload command) {
+        decisions.findByApplicationApplicationId(command.applicationId()).ifPresent(existing -> {
+            if (!existing.getCommandId().equals(command.commandId())) {
+                log.warn("Conflicting decision command rejected applicationId={} existingCommandId={} newCommandId={}",
+                        command.applicationId(), existing.getCommandId(), command.commandId());
+                throw new ConflictException("Application already has a different decision command");
+            }
+        });
     }
 
     private OutboxEventEntity submittedEvent(UUID applicationId, LoanApplicationCreateRequest request, Instant now) {
@@ -302,6 +393,30 @@ public class LoanApplicationService {
         envelope.put("payload", payload);
 
         return event("loan.decision.finalized.v1", applicationId, applicationId.toString(), cause.eventId(), envelope, now);
+    }
+
+    private OutboxEventEntity evidenceUpdatedEvent(UUID applicationId, EvidenceUpdateCommand command,
+                                                   int snapshotVersion, Instant now) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("applicationId", applicationId.toString());
+        payload.put("decisionCaseId", command.decisionCaseId());
+        payload.put("inputSnapshotVersion", "snapshot-v" + snapshotVersion);
+        payload.put("evidenceRefs", List.copyOf(command.evidenceRefs()));
+
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put("eventId", UUID.randomUUID().toString());
+        envelope.put("eventType", "loan.evidence.updated.v1");
+        envelope.put("schemaVersion", EVENT_SCHEMA_VERSION);
+        envelope.put("occurredAt", now.toString());
+        envelope.put("producer", "loan-service");
+        envelope.put("applicationId", applicationId.toString());
+        envelope.put("caseId", command.decisionCaseId());
+        envelope.put("evaluationRunId", null);
+        envelope.put("correlationId", applicationId.toString());
+        envelope.put("causationId", command.causationId().toString());
+        envelope.put("payload", payload);
+
+        return event("loan.evidence.updated.v1", applicationId, applicationId.toString(), command.causationId(), envelope, now);
     }
 
     private OutboxEventEntity event(String eventType, UUID aggregateId, String correlationId, UUID causationId,

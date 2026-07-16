@@ -33,6 +33,7 @@ AI 판단 검증과 실행 통제는 Governance Service가 담당합니다.
 Published through `outbox_event`:
 
 - `loan.application.submitted.v1` / `schemaVersion=1.1.0`
+- `loan.evidence.updated.v1` / `schemaVersion=1.1.0`
 - `loan.decision.finalized.v1` / `schemaVersion=1.1.0`
 
 Consumed idempotently through `inbox_event`:
@@ -41,20 +42,26 @@ Consumed idempotently through `inbox_event`:
 - `governance.evidence.requested.v1`
 - `loan.decision.commanded.v1`
 
+Kafka topics are the event type names. The service does not use an aggregate `rippleguard.events` topic.
+
 Phase 1 correlation policy is `correlationId == applicationId`; execution scope is separated by `evaluationRunId` and `causationId`.
 
 ## Runtime configuration
 
 | Variable | Default |
 | --- | --- |
-| `DB_URL` | `jdbc:postgresql://localhost:5432/rippleguard_loan` |
-| `DB_USERNAME` | `rippleguard` |
-| `DB_PASSWORD` | `rippleguard` |
-| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` |
+| `DB_URL` | `jdbc:postgresql://localhost:5433/rippleguard_loan` |
+| `DB_USERNAME` | `rippleguard_loan` |
+| `DB_PASSWORD` | `rippleguard_loan` |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9094` |
 | `KAFKA_CONSUMER_GROUP` | `rippleguard-loan-service` |
 | `LOAN_KAFKA_ENABLED` | `true` |
-| `LOAN_KAFKA_TOPIC` | `rippleguard.events` |
+| `LOAN_TOPIC_GOVERNANCE_REVIEW_STARTED` | `governance.review.started.v1` |
+| `LOAN_TOPIC_GOVERNANCE_EVIDENCE_REQUESTED` | `governance.evidence.requested.v1` |
+| `LOAN_TOPIC_LOAN_DECISION_COMMANDED` | `loan.decision.commanded.v1` |
 | `OUTBOX_BATCH_SIZE` | `50` |
+
+For Compose-internal execution use `DB_URL=jdbc:postgresql://loan-postgres:5432/rippleguard_loan` and `KAFKA_BOOTSTRAP_SERVERS=kafka:9092`.
 
 ## Run and test
 
@@ -64,6 +71,8 @@ Phase 1 correlation policy is `correlationId == applicationId`; execution scope 
 ./mvnw package
 docker build -t rippleguard-loan-service:phase1 .
 ```
+
+`./mvnw test` includes a Testcontainers PostgreSQL migration test. Docker must be available for the full test suite.
 
 Health endpoints:
 

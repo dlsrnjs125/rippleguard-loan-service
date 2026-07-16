@@ -13,7 +13,9 @@
 
 `governance.review.started.v1` moves the application from `SUBMITTED` to `UNDER_GOVERNANCE_REVIEW`. Duplicate `eventId` values are ignored.
 
-`governance.evidence.requested.v1` moves the application to `EVIDENCE_REQUIRED`. The current implementation records the request and state transition; evidence update publication is left as a follow-up because no Phase 1 REST evidence update endpoint is implemented in this service.
+`governance.evidence.requested.v1` moves the application to `EVIDENCE_REQUIRED`.
+
+An application-level evidence update command stores a new `FinancialSnapshot`, increments `snapshotVersion`, emits `loan.evidence.updated.v1`, and moves the application back to `UNDER_GOVERNANCE_REVIEW`. No public REST evidence-update endpoint is exposed yet; adapters can call the application service command path.
 
 ## Decision command
 
@@ -26,8 +28,9 @@
 - `assuranceResult` is `ASSURANCE_COMPLETE`;
 - `finalDecision` is `APPROVE` or `REJECT`;
 - `eventId`, `commandId`, and application decision are not already processed.
+- the current application status is exactly `UNDER_GOVERNANCE_REVIEW`.
 
-Successful processing transitions to `DECISION_RECEIVED`, then `FINALIZED`, and writes `loan.decision.finalized.v1` to the outbox.
+Successful processing transitions to `DECISION_RECEIVED`, then `FINALIZED`, and writes `loan.decision.finalized.v1` to the outbox. The service does not auto-repair missing `governance.review.started.v1` or missing evidence update events.
 
 Phase 1 correlation rule:
 
