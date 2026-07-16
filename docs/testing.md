@@ -22,6 +22,8 @@ Current integration tests cover:
 - conflicting decision command rejection;
 - bad schema version and ID mismatch rejection;
 - finalized outbox emission exactly once.
+- Outbox publisher success, failure, event-type topic routing, and retry state transitions;
+- PostgreSQL `FOR UPDATE SKIP LOCKED` claim and stale `PROCESSING` lease reclaim;
 - pinned contract fixture deserialization;
 - PostgreSQL Flyway migration through Testcontainers.
 
@@ -31,5 +33,5 @@ Most service integration tests use H2 in PostgreSQL compatibility mode with Flyw
 
 Recommended follow-ups:
 
-- Add embedded Kafka tests for consumer wiring and outbox publisher retry behavior.
+- Add embedded Kafka tests for consumer wiring.
 - Add optimistic-lock race tests around concurrent command handling.

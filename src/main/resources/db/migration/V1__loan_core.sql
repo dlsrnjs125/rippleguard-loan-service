@@ -89,6 +89,9 @@ create table outbox_event (
     status varchar(32) not null,
     attempts integer not null,
     next_attempt_at timestamp with time zone not null,
+    processing_started_at timestamp with time zone,
+    lease_until timestamp with time zone,
+    claimed_by varchar(128),
     published_at timestamp with time zone,
     created_at timestamp with time zone not null,
     updated_at timestamp with time zone not null,
@@ -97,6 +100,7 @@ create table outbox_event (
 );
 
 create index ix_outbox_status_next_attempt on outbox_event(status, next_attempt_at);
+create index ix_outbox_processing_lease on outbox_event(status, lease_until);
 
 create table inbox_event (
     event_id uuid primary key,

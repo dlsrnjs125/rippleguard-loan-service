@@ -31,6 +31,16 @@ Confirm:
 - the row has `next_attempt_at <= now`;
 - repeated failures have not pushed the retry time into the future.
 
+## Outbox event remains PROCESSING
+
+`PROCESSING` rows are lease-based. Check:
+
+- `lease_until`: expired rows are eligible for claim again;
+- `claimed_by`: identifies the worker instance that last claimed the row;
+- `processing_started_at`: shows when the attempt started.
+
+If Kafka publish succeeded but the service died before marking the row `PUBLISHED`, the event may be published again after lease expiry. This is expected at-least-once behavior; downstream consumers must use `eventId` inbox idempotency.
+
 ## Docker build cannot find the jar
 
 Build the application before building the image:

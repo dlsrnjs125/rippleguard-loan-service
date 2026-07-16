@@ -13,8 +13,14 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEventEntity, 
             value = """
                     select *
                     from outbox_event
-                    where status in ('PENDING', 'FAILED')
-                      and next_attempt_at <= :now
+                    where (
+                        status in ('PENDING', 'FAILED')
+                        and next_attempt_at <= :now
+                    )
+                    or (
+                        status = 'PROCESSING'
+                        and lease_until < :now
+                    )
                     order by created_at
                     for update skip locked
                     limit :batchSize

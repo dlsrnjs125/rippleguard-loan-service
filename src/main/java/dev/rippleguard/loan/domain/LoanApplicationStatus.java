@@ -17,7 +17,7 @@ public enum LoanApplicationStatus {
             DRAFT, EnumSet.of(SUBMITTED),
             SUBMITTED, EnumSet.of(UNDER_GOVERNANCE_REVIEW),
             UNDER_GOVERNANCE_REVIEW, EnumSet.of(EVIDENCE_REQUIRED, DECISION_RECEIVED),
-            EVIDENCE_REQUIRED, EnumSet.of(UNDER_GOVERNANCE_REVIEW, DECISION_RECEIVED),
+            EVIDENCE_REQUIRED, EnumSet.of(UNDER_GOVERNANCE_REVIEW),
             DECISION_RECEIVED, EnumSet.of(FINALIZED),
             FINALIZED, EnumSet.of(CLOSED)
     );

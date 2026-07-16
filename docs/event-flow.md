@@ -15,7 +15,13 @@
 
 `governance.evidence.requested.v1` moves the application to `EVIDENCE_REQUIRED`.
 
-An application-level evidence update command stores a new `FinancialSnapshot`, increments `snapshotVersion`, emits `loan.evidence.updated.v1`, and moves the application back to `UNDER_GOVERNANCE_REVIEW`. No public REST evidence-update endpoint is exposed yet; adapters can call the application service command path.
+An internal evidence update adapter stores a new `FinancialSnapshot`, increments `snapshotVersion`, emits `loan.evidence.updated.v1`, and moves the application back to `UNDER_GOVERNANCE_REVIEW`.
+
+The adapter is intentionally internal-only:
+
+- `POST /internal/api/v1/loan-applications/{applicationId}/evidence`
+- no public Phase 1 REST contract endpoint is added
+- public evidence input contract should be finalized with Governance/Web integration
 
 ## Decision command
 

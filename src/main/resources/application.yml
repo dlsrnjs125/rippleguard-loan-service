@@ -4,7 +4,7 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5433/rippleguard_loan}
     username: ${DB_USERNAME:rippleguard_loan}
-    password: ${DB_PASSWORD:rippleguard_loan}
+    password: ${DB_PASSWORD:change-me-loan-local}
   flyway:
     enabled: true
   jpa:
@@ -49,3 +49,5 @@ rippleguard:
       decision-commanded: ${LOAN_TOPIC_LOAN_DECISION_COMMANDED:loan.decision.commanded.v1}
   outbox:
     batch-size: ${OUTBOX_BATCH_SIZE:50}
+    lease-seconds: ${OUTBOX_LEASE_SECONDS:60}
+    instance-id: ${OUTBOX_INSTANCE_ID:${HOSTNAME:loan-service-local}}

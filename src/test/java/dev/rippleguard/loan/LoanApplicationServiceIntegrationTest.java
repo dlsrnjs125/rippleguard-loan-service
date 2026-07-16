@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.rippleguard.loan.application.ConflictException;
 import dev.rippleguard.loan.application.EvidenceUpdateCommand;
 import dev.rippleguard.loan.application.EventEnvelope;
+import dev.rippleguard.loan.application.FinancialSnapshotInput;
 import dev.rippleguard.loan.application.InvalidStateTransitionException;
 import dev.rippleguard.loan.application.LoanApplicationService;
 import dev.rippleguard.loan.domain.LoanApplicationStatus;
@@ -138,7 +139,7 @@ class LoanApplicationServiceIntegrationTest {
                         evidenceRequested.eventId(),
                         List.of("evidence://transaction-explanation/1")
                 ),
-                validRequest("loan-evidence-006", "25000000.00")
+                FinancialSnapshotInput.fromCreateRequest(validRequest("loan-evidence-006", "25000000.00"))
         );
 
         assertThat(updated.status()).isEqualTo(LoanApplicationStatus.UNDER_GOVERNANCE_REVIEW);
@@ -180,7 +181,7 @@ class LoanApplicationServiceIntegrationTest {
                         UUID.randomUUID(),
                         List.of("evidence://transaction-explanation/1")
                 ),
-                validRequest("loan-evidence-010", "25000000.00")
+                FinancialSnapshotInput.fromCreateRequest(validRequest("loan-evidence-010", "25000000.00"))
         )).isInstanceOf(InvalidStateTransitionException.class);
     }
 

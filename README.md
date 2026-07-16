@@ -52,7 +52,7 @@ Phase 1 correlation policy is `correlationId == applicationId`; execution scope 
 | --- | --- |
 | `DB_URL` | `jdbc:postgresql://localhost:5433/rippleguard_loan` |
 | `DB_USERNAME` | `rippleguard_loan` |
-| `DB_PASSWORD` | `rippleguard_loan` |
+| `DB_PASSWORD` | `change-me-loan-local` |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9094` |
 | `KAFKA_CONSUMER_GROUP` | `rippleguard-loan-service` |
 | `LOAN_KAFKA_ENABLED` | `true` |
@@ -60,8 +60,14 @@ Phase 1 correlation policy is `correlationId == applicationId`; execution scope 
 | `LOAN_TOPIC_GOVERNANCE_EVIDENCE_REQUESTED` | `governance.evidence.requested.v1` |
 | `LOAN_TOPIC_LOAN_DECISION_COMMANDED` | `loan.decision.commanded.v1` |
 | `OUTBOX_BATCH_SIZE` | `50` |
+| `OUTBOX_LEASE_SECONDS` | `60` |
+| `OUTBOX_INSTANCE_ID` | `loan-service-local` |
 
-For Compose-internal execution use `DB_URL=jdbc:postgresql://loan-postgres:5432/rippleguard_loan` and `KAFKA_BOOTSTRAP_SERVERS=kafka:9092`.
+For Compose-internal execution use `DB_URL=jdbc:postgresql://loan-postgres:5432/rippleguard_loan` and `KAFKA_BOOTSTRAP_SERVERS=kafka:9092`. Keep `DB_PASSWORD` aligned with Infra `LOAN_POSTGRES_PASSWORD`.
+
+Evidence updates are exposed only through `/internal/api/v1/loan-applications/{applicationId}/evidence`; no public Phase 1 contract endpoint is added.
+
+Outbox publishing is at-least-once. Consumers must use `eventId`/inbox idempotency because a crash after Kafka success and before DB status update can cause duplicate publication after lease recovery.
 
 ## Run and test
 
@@ -85,4 +91,5 @@ Health endpoints:
 - [Domain model](docs/domain-model.md)
 - [Event flow](docs/event-flow.md)
 - [Testing](docs/testing.md)
+- [Trade-offs](docs/trade-offs.md)
 - [Troubleshooting](docs/troubleshooting.md)

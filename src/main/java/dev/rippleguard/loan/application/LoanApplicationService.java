@@ -156,7 +156,7 @@ public class LoanApplicationService {
     }
 
     @Transactional
-    public LoanApplicationResponse updateEvidence(EvidenceUpdateCommand command, LoanApplicationCreateRequest evidenceSnapshot) {
+    public LoanApplicationResponse updateEvidence(EvidenceUpdateCommand command, FinancialSnapshotInput evidenceSnapshot) {
         if (command.applicationId() == null) {
             throw new IllegalArgumentException("Evidence update command applicationId is required");
         }
@@ -175,34 +175,7 @@ public class LoanApplicationService {
 
         Instant now = clock.instant();
         int nextSnapshotVersion = application.incrementSnapshotVersion(now);
-        String canonicalPayload = json.canonicalJson(evidenceSnapshot);
-        FinancialSnapshotEntity snapshot = snapshots.save(new FinancialSnapshotEntity(
-                UUID.randomUUID(),
-                application,
-                nextSnapshotVersion,
-                evidenceSnapshot.applicantReference(),
-                money(evidenceSnapshot.requestedAmount()),
-                evidenceSnapshot.currency(),
-                money(evidenceSnapshot.debtSummary().totalOutstandingAmount()),
-                money(evidenceSnapshot.debtSummary().monthlyPaymentAmount()),
-                evidenceSnapshot.delinquencySummary().delinquencyCount(),
-                evidenceSnapshot.delinquencySummary().daysPastDueMaximum(),
-                evidenceSnapshot.platformSettlementSummary().period(),
-                money(evidenceSnapshot.platformSettlementSummary().grossSettlementAmount()),
-                json.canonicalJson(evidenceSnapshot.debtSummary().sourceReferences()),
-                json.canonicalJson(evidenceSnapshot.delinquencySummary().sourceReferences()),
-                json.canonicalJson(evidenceSnapshot.platformSettlementSummary().sourceReferences()),
-                json.canonicalJson(evidenceSnapshot.riskSignalReferences()),
-                canonicalPayload,
-                now
-        ));
-        evidenceSnapshot.incomeHistory().forEach(income -> monthlyIncomes.save(new MonthlyIncomeEntity(
-                UUID.randomUUID(),
-                snapshot,
-                income.period(),
-                money(income.amount()),
-                income.sourceReference()
-        )));
+        storeSnapshot(application, nextSnapshotVersion, evidenceSnapshot, now);
 
         transition(application, LoanApplicationStatus.UNDER_GOVERNANCE_REVIEW);
         outbox.save(evidenceUpdatedEvent(application.getApplicationId(), command, nextSnapshotVersion, now));
@@ -224,37 +197,44 @@ public class LoanApplicationService {
                 now
         ));
 
+        storeSnapshot(application, 1, FinancialSnapshotInput.fromCreateRequest(request), now);
+
+        outbox.save(submittedEvent(applicationId, request, now));
+        return toResponse(application);
+    }
+
+    private FinancialSnapshotEntity storeSnapshot(LoanApplicationEntity application, int version,
+                                                  FinancialSnapshotInput input, Instant now) {
+        String canonicalPayload = json.canonicalJson(input);
         FinancialSnapshotEntity snapshot = snapshots.save(new FinancialSnapshotEntity(
                 UUID.randomUUID(),
                 application,
-                1,
-                request.applicantReference(),
-                money(request.requestedAmount()),
-                request.currency(),
-                money(request.debtSummary().totalOutstandingAmount()),
-                money(request.debtSummary().monthlyPaymentAmount()),
-                request.delinquencySummary().delinquencyCount(),
-                request.delinquencySummary().daysPastDueMaximum(),
-                request.platformSettlementSummary().period(),
-                money(request.platformSettlementSummary().grossSettlementAmount()),
-                json.canonicalJson(request.debtSummary().sourceReferences()),
-                json.canonicalJson(request.delinquencySummary().sourceReferences()),
-                json.canonicalJson(request.platformSettlementSummary().sourceReferences()),
-                json.canonicalJson(request.riskSignalReferences()),
+                version,
+                input.applicantReference(),
+                money(input.requestedAmount()),
+                input.currency(),
+                money(input.debtSummary().totalOutstandingAmount()),
+                money(input.debtSummary().monthlyPaymentAmount()),
+                input.delinquencySummary().delinquencyCount(),
+                input.delinquencySummary().daysPastDueMaximum(),
+                input.platformSettlementSummary().period(),
+                money(input.platformSettlementSummary().grossSettlementAmount()),
+                json.canonicalJson(input.debtSummary().sourceReferences()),
+                json.canonicalJson(input.delinquencySummary().sourceReferences()),
+                json.canonicalJson(input.platformSettlementSummary().sourceReferences()),
+                json.canonicalJson(input.riskSignalReferences()),
                 canonicalPayload,
                 now
         ));
 
-        request.incomeHistory().forEach(income -> monthlyIncomes.save(new MonthlyIncomeEntity(
+        input.incomeHistory().forEach(income -> monthlyIncomes.save(new MonthlyIncomeEntity(
                 UUID.randomUUID(),
                 snapshot,
                 income.period(),
                 money(income.amount()),
                 income.sourceReference()
         )));
-
-        outbox.save(submittedEvent(applicationId, request, now));
-        return toResponse(application);
+        return snapshot;
     }
 
     private LoanApplicationResponse existingIdempotentResponse(LoanApplicationEntity existing, String requestHash) {

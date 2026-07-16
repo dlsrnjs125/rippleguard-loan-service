@@ -20,7 +20,6 @@ class LoanApplicationStatusTest {
         assertThat(UNDER_GOVERNANCE_REVIEW.canTransitionTo(EVIDENCE_REQUIRED)).isTrue();
         assertThat(UNDER_GOVERNANCE_REVIEW.canTransitionTo(DECISION_RECEIVED)).isTrue();
         assertThat(EVIDENCE_REQUIRED.canTransitionTo(UNDER_GOVERNANCE_REVIEW)).isTrue();
-        assertThat(EVIDENCE_REQUIRED.canTransitionTo(DECISION_RECEIVED)).isTrue();
         assertThat(DECISION_RECEIVED.canTransitionTo(FINALIZED)).isTrue();
         assertThat(FINALIZED.canTransitionTo(CLOSED)).isTrue();
     }
@@ -28,6 +27,7 @@ class LoanApplicationStatusTest {
     @Test
     void rejectsUndeclaredTransitions() {
         assertThat(SUBMITTED.canTransitionTo(FINALIZED)).isFalse();
+        assertThat(EVIDENCE_REQUIRED.canTransitionTo(DECISION_RECEIVED)).isFalse();
         assertThat(EVIDENCE_REQUIRED.canTransitionTo(FINALIZED)).isFalse();
         assertThat(FINALIZED.canTransitionTo(DECISION_RECEIVED)).isFalse();
         for (LoanApplicationStatus status : LoanApplicationStatus.values()) {

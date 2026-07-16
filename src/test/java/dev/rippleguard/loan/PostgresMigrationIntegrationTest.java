@@ -78,11 +78,33 @@ class PostgresMigrationIntegrationTest {
 
         assertThat(claimed).hasSize(1);
         assertThat(claimed.get(0).getEventId()).isEqualTo(eventId);
-        claimed.get(0).markProcessing(now);
+        claimed.get(0).markProcessing(now, now.plusSeconds(60), "test-instance");
         transactions.executeWithoutResult(status -> outbox.save(claimed.get(0)));
 
         assertThat(outbox.findById(eventId)).get()
                 .extracting(OutboxEventEntity::getStatus)
                 .isEqualTo(OutboxStatus.PROCESSING);
+    }
+
+    @Test
+    void reclaimsProcessingRowsAfterLeaseExpires() {
+        Instant now = Instant.now();
+        OutboxEventEntity event = new OutboxEventEntity(
+                UUID.randomUUID(),
+                "loan.decision.finalized.v1",
+                "1.1.0",
+                UUID.randomUUID(),
+                UUID.randomUUID().toString(),
+                null,
+                "{\"eventType\":\"loan.decision.finalized.v1\"}",
+                now.minusSeconds(120)
+        );
+        event.markProcessing(now.minusSeconds(120), now.minusSeconds(60), "dead-instance");
+        outbox.saveAndFlush(event);
+
+        var claimed = transactions.execute(status -> outbox.findClaimable(now, 10));
+
+        assertThat(claimed).hasSize(1);
+        assertThat(claimed.get(0).getEventId()).isEqualTo(event.getEventId());
     }
 }

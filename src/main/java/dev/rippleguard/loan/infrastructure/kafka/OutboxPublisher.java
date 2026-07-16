@@ -25,17 +25,23 @@ public class OutboxPublisher {
     private final Clock clock;
     private final TransactionTemplate transactions;
     private final int batchSize;
+    private final long leaseSeconds;
+    private final String instanceId;
 
     public OutboxPublisher(OutboxEventRepository outbox,
                            KafkaTemplate<String, String> kafka,
                            Clock clock,
                            TransactionTemplate transactions,
-                           @Value("${rippleguard.outbox.batch-size}") int batchSize) {
+                           @Value("${rippleguard.outbox.batch-size}") int batchSize,
+                           @Value("${rippleguard.outbox.lease-seconds}") long leaseSeconds,
+                           @Value("${rippleguard.outbox.instance-id}") String instanceId) {
         this.outbox = outbox;
         this.kafka = kafka;
         this.clock = clock;
         this.transactions = transactions;
         this.batchSize = batchSize;
+        this.leaseSeconds = leaseSeconds;
+        this.instanceId = instanceId;
     }
 
     @Scheduled(fixedDelayString = "${OUTBOX_PUBLISHER_DELAY_MS:5000}")
@@ -48,7 +54,8 @@ public class OutboxPublisher {
                 log.info("Published outbox event eventId={} eventType={}", event.getEventId(), event.getEventType());
             } catch (Exception exception) {
                 markFailed(event);
-                log.warn("Outbox publish failed eventId={} eventType={}", event.getEventId(), event.getEventType(), exception);
+                log.warn("Outbox publish failed eventId={} eventType={} reason={}",
+                        event.getEventId(), event.getEventType(), exception.toString());
             }
         }
     }
@@ -57,7 +64,8 @@ public class OutboxPublisher {
         return transactions.execute(status -> {
             Instant now = clock.instant();
             List<OutboxEventEntity> events = outbox.findClaimable(now, batchSize);
-            events.forEach(event -> event.markProcessing(now));
+            Instant leaseUntil = now.plusSeconds(leaseSeconds);
+            events.forEach(event -> event.markProcessing(now, leaseUntil, instanceId));
             return List.copyOf(events);
         });
     }

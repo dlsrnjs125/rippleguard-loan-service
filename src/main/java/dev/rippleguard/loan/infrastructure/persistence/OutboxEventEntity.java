@@ -48,6 +48,15 @@ public class OutboxEventEntity {
     @Column(name = "next_attempt_at", nullable = false)
     private Instant nextAttemptAt;
 
+    @Column(name = "processing_started_at")
+    private Instant processingStartedAt;
+
+    @Column(name = "lease_until")
+    private Instant leaseUntil;
+
+    @Column(name = "claimed_by", length = 128)
+    private String claimedBy;
+
     @Column(name = "published_at")
     private Instant publishedAt;
 
@@ -79,11 +88,17 @@ public class OutboxEventEntity {
     public void markPublished(Instant now) {
         status = OutboxStatus.PUBLISHED;
         publishedAt = now;
+        processingStartedAt = null;
+        leaseUntil = null;
+        claimedBy = null;
         updatedAt = now;
     }
 
-    public void markProcessing(Instant now) {
+    public void markProcessing(Instant now, Instant leaseUntil, String claimedBy) {
         status = OutboxStatus.PROCESSING;
+        processingStartedAt = now;
+        this.leaseUntil = leaseUntil;
+        this.claimedBy = claimedBy;
         updatedAt = now;
     }
 
@@ -91,6 +106,9 @@ public class OutboxEventEntity {
         attempts++;
         status = OutboxStatus.FAILED;
         nextAttemptAt = now.plusSeconds(Math.min(300, 5L * attempts));
+        processingStartedAt = null;
+        leaseUntil = null;
+        claimedBy = null;
         updatedAt = now;
     }
 
@@ -112,5 +130,17 @@ public class OutboxEventEntity {
 
     public OutboxStatus getStatus() {
         return status;
+    }
+
+    public int getAttempts() {
+        return attempts;
+    }
+
+    public Instant getLeaseUntil() {
+        return leaseUntil;
+    }
+
+    public String getClaimedBy() {
+        return claimedBy;
     }
 }
