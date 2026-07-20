@@ -50,11 +50,12 @@ Phase 1 correlation policy is `correlationId == applicationId`; execution scope 
 
 | Variable | Default |
 | --- | --- |
-| `DB_URL` | `jdbc:postgresql://localhost:5433/rippleguard_loan` |
-| `DB_USERNAME` | `rippleguard_loan` |
-| `DB_PASSWORD` | `change-me-loan-local` |
+| `DB_URL` | Required |
+| `DB_USERNAME` | Required |
+| `DB_PASSWORD` | Required |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9094` |
 | `KAFKA_CONSUMER_GROUP` | `rippleguard-loan-service` |
+| `INTERNAL_API_SERVICE_TOKEN` | Required |
 | `LOAN_KAFKA_ENABLED` | `true` |
 | `LOAN_TOPIC_GOVERNANCE_REVIEW_STARTED` | `governance.review.started.v1` |
 | `LOAN_TOPIC_GOVERNANCE_EVIDENCE_REQUESTED` | `governance.evidence.requested.v1` |
@@ -73,12 +74,22 @@ Outbox publishing is at-least-once. Consumers must use `eventId`/inbox idempoten
 
 ```bash
 ./mvnw test
-./mvnw spring-boot:run
+cp .env.example .env
+# Fill .env with local values.
+./scripts/run-local.sh
 ./mvnw package
-docker build -t rippleguard-loan-service:phase1 .
+./scripts/build-image.sh
 ```
 
 `./mvnw test` includes a Testcontainers PostgreSQL migration test. Docker must be available for the full test suite.
+
+`scripts/build-image.sh` packages the service and builds
+`rippleguard-loan-service:<commit-sha-12>`. The image records
+`org.opencontainers.image.revision` as the full Git commit SHA and
+`org.opencontainers.image.source` as this repository URL. After this PR is
+merged, build the final Loan Service image from the new `main` merge commit in
+this repository. RippleGuard Infra records and verifies the immutable image
+baseline; Infra does not own the Loan image build.
 
 Health endpoints:
 
