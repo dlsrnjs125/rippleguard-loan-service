@@ -86,8 +86,10 @@ cp .env.example .env
 `scripts/build-image.sh` packages the service and builds
 `rippleguard-loan-service:<commit-sha-12>`. The image records
 `org.opencontainers.image.revision` as the full Git commit SHA and
-`org.opencontainers.image.source` as this repository URL. Final Phase 1
-baseline images are rebuilt from the merged `main` commit in Infra.
+`org.opencontainers.image.source` as this repository URL. After this PR is
+merged, build the final Loan Service image from the new `main` merge commit in
+this repository. RippleGuard Infra records and verifies the immutable image
+baseline; Infra does not own the Loan image build.
 
 Health endpoints:
 

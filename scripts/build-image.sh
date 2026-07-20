@@ -6,6 +6,12 @@ revision="$(git rev-parse HEAD)"
 tag_revision="$(printf '%s' "${revision}" | cut -c1-12)"
 image="rippleguard-loan-service:${tag_revision}"
 
+if [ -n "$(git status --porcelain)" ]; then
+  echo "Refusing to build immutable image from a dirty working tree" >&2
+  git status --short >&2
+  exit 1
+fi
+
 ./mvnw package
 
 docker build \
@@ -14,4 +20,20 @@ docker build \
   -t "${image}" \
   .
 
-echo "${image}"
+actual_revision="$(
+  docker image inspect "${image}" \
+    --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+)"
+
+actual_source="$(
+  docker image inspect "${image}" \
+    --format '{{ index .Config.Labels "org.opencontainers.image.source" }}'
+)"
+
+test "${actual_revision}" = "${revision}"
+test "${actual_source}" = "${repo_source}"
+
+printf 'Image: %s\n' "${image}"
+printf 'Revision: %s\n' "${actual_revision}"
+printf 'Source: %s\n' "${actual_source}"
+printf 'Provenance: PASS\n'
