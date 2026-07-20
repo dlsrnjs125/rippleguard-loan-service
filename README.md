@@ -50,11 +50,12 @@ Phase 1 correlation policy is `correlationId == applicationId`; execution scope 
 
 | Variable | Default |
 | --- | --- |
-| `DB_URL` | `jdbc:postgresql://localhost:5433/rippleguard_loan` |
-| `DB_USERNAME` | `rippleguard_loan` |
-| `DB_PASSWORD` | `change-me-loan-local` |
+| `DB_URL` | Required |
+| `DB_USERNAME` | Required |
+| `DB_PASSWORD` | Required |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9094` |
 | `KAFKA_CONSUMER_GROUP` | `rippleguard-loan-service` |
+| `INTERNAL_API_SERVICE_TOKEN` | Required |
 | `LOAN_KAFKA_ENABLED` | `true` |
 | `LOAN_TOPIC_GOVERNANCE_REVIEW_STARTED` | `governance.review.started.v1` |
 | `LOAN_TOPIC_GOVERNANCE_EVIDENCE_REQUESTED` | `governance.evidence.requested.v1` |
@@ -73,7 +74,9 @@ Outbox publishing is at-least-once. Consumers must use `eventId`/inbox idempoten
 
 ```bash
 ./mvnw test
-./mvnw spring-boot:run
+cp .env.example .env
+# Fill .env with local values.
+./scripts/run-local.sh
 ./mvnw package
 ./scripts/build-image.sh
 ```

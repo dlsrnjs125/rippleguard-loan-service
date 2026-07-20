@@ -2,9 +2,9 @@ spring:
   application:
     name: rippleguard-loan-service
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5433/rippleguard_loan}
-    username: ${DB_USERNAME:rippleguard_loan}
-    password: ${DB_PASSWORD:change-me-loan-local}
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
   flyway:
     enabled: true
   jpa:
@@ -52,4 +52,4 @@ rippleguard:
     lease-seconds: ${OUTBOX_LEASE_SECONDS:60}
     instance-id: ${OUTBOX_INSTANCE_ID:${HOSTNAME:loan-service-local}}
   internal-api:
-    service-token: ${INTERNAL_API_SERVICE_TOKEN:change-me-internal-local}
+    service-token: ${INTERNAL_API_SERVICE_TOKEN}
