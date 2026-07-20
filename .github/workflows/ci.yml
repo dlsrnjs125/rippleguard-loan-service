@@ -26,4 +26,18 @@ jobs:
         run: ./mvnw package
 
       - name: Docker build
-        run: docker build -t rippleguard-loan-service:ci .
+        run: |
+          image="rippleguard-loan-service:${GITHUB_SHA::12}"
+          docker build \
+            --build-arg "OCI_REVISION=${GITHUB_SHA}" \
+            --build-arg "OCI_SOURCE=https://github.com/dlsrnjs125/rippleguard-loan-service" \
+            -t "${image}" \
+            .
+
+      - name: Verify OCI labels
+        run: |
+          image="rippleguard-loan-service:${GITHUB_SHA::12}"
+          revision="$(docker image inspect "${image}" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          source="$(docker image inspect "${image}" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}')"
+          test "${revision}" = "${GITHUB_SHA}"
+          test "${source}" = "https://github.com/dlsrnjs125/rippleguard-loan-service"

@@ -75,10 +75,16 @@ Outbox publishing is at-least-once. Consumers must use `eventId`/inbox idempoten
 ./mvnw test
 ./mvnw spring-boot:run
 ./mvnw package
-docker build -t rippleguard-loan-service:phase1 .
+./scripts/build-image.sh
 ```
 
 `./mvnw test` includes a Testcontainers PostgreSQL migration test. Docker must be available for the full test suite.
+
+`scripts/build-image.sh` packages the service and builds
+`rippleguard-loan-service:<commit-sha-12>`. The image records
+`org.opencontainers.image.revision` as the full Git commit SHA and
+`org.opencontainers.image.source` as this repository URL. Final Phase 1
+baseline images are rebuilt from the merged `main` commit in Infra.
 
 Health endpoints:
 
