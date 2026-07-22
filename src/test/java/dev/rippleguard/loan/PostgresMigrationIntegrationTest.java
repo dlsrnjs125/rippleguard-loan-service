@@ -77,6 +77,7 @@ class PostgresMigrationIntegrationTest {
     @BeforeEach
     void cleanDatabase() {
         jdbc.update("delete from evidence_update_request");
+        jdbc.update("delete from loan_feature_snapshot");
         jdbc.update("delete from monthly_income");
         jdbc.update("delete from financial_snapshot");
         jdbc.update("delete from loan_decision");
@@ -230,6 +231,7 @@ class PostgresMigrationIntegrationTest {
                 new LoanApplicationCreateRequest.DebtSummaryRequest("4000000.00", "350000.00", List.of("masked:debt-summary-001")),
                 new LoanApplicationCreateRequest.DelinquencySummaryRequest(0, 0, List.of("masked:delinquency-001")),
                 new LoanApplicationCreateRequest.PlatformSettlementSummaryRequest("2026-Q2", "18000000.00", List.of("synthetic:settlement-q2")),
+                new LoanApplicationCreateRequest.Phase2FeatureSourceRequest("0.081", 36, 0),
                 List.of("synthetic:risk-signal-001"),
                 idempotencyKey
         );

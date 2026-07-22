@@ -78,6 +78,11 @@ public class InternalEvidenceController {
                         request.platformSettlementSummary().grossSettlementAmount(),
                         request.platformSettlementSummary().sourceReferences()
                 ),
+                new FinancialSnapshotInput.Phase2FeatureSourceInput(
+                        request.phase2FeatureSource().platformSettlementVolatility(),
+                        request.phase2FeatureSource().contractDurationMonths(),
+                        request.phase2FeatureSource().telecomPaymentDelinquencyCount()
+                ),
                 request.riskSignalReferences()
         );
     }

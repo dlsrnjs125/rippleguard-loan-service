@@ -10,7 +10,9 @@ import dev.rippleguard.loan.application.EventEnvelope;
 import dev.rippleguard.loan.application.FinancialSnapshotInput;
 import dev.rippleguard.loan.application.InvalidStateTransitionException;
 import dev.rippleguard.loan.application.LoanApplicationService;
+import dev.rippleguard.loan.application.Phase2FeatureSnapshotService;
 import dev.rippleguard.loan.domain.LoanApplicationStatus;
+import dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotRepository;
 import dev.rippleguard.loan.infrastructure.persistence.LoanApplicationRepository;
 import dev.rippleguard.loan.infrastructure.persistence.LoanDecisionRepository;
 import dev.rippleguard.loan.infrastructure.persistence.OutboxEventRepository;
@@ -35,7 +37,13 @@ class LoanApplicationServiceIntegrationTest {
     LoanApplicationService service;
 
     @Autowired
+    Phase2FeatureSnapshotService featureSnapshots;
+
+    @Autowired
     LoanApplicationRepository applications;
+
+    @Autowired
+    LoanFeatureSnapshotRepository featureSnapshotRepository;
 
     @Autowired
     OutboxEventRepository outbox;
@@ -55,6 +63,7 @@ class LoanApplicationServiceIntegrationTest {
     @BeforeEach
     void cleanDatabase() {
         jdbc.update("delete from evidence_update_request");
+        jdbc.update("delete from loan_feature_snapshot");
         jdbc.update("delete from monthly_income");
         jdbc.update("delete from financial_snapshot");
         jdbc.update("delete from loan_decision");
@@ -70,8 +79,68 @@ class LoanApplicationServiceIntegrationTest {
         assertThat(response.status()).isEqualTo(LoanApplicationStatus.SUBMITTED);
         assertThat(response.snapshotVersion()).isEqualTo("snapshot-v1");
         assertThat(applications.findById(response.applicationId())).isPresent();
+        assertThat(featureSnapshotRepository.findByApplicationApplicationIdAndSnapshotVersion(
+                response.applicationId(), "snapshot-v1")).isPresent();
         assertThat(outbox.findAll()).hasSize(1);
         assertThat(outbox.findAll().get(0).getEventType()).isEqualTo("loan.application.submitted.v1");
+    }
+
+    @Test
+    void returnsStoredPhase2FeatureSnapshotWithoutRecomputingApplicationState() throws Exception {
+        LoanApplicationResponse created = service.create(validRequest("loan-create-feature-001", "25000000.00"));
+        var firstSnapshot = featureSnapshots.get(created.applicationId(), "snapshot-v1");
+
+        assertThat(firstSnapshot.snapshotVersion()).isEqualTo("snapshot-v1");
+        assertThat(firstSnapshot.featurePayloadDigest()).startsWith("sha256:");
+        assertThat(firstSnapshot.featurePayload())
+                .containsEntry("featurePayloadDigest", firstSnapshot.featurePayloadDigest());
+        assertThat((Map<String, Object>) firstSnapshot.featurePayload().get("features"))
+                .containsKeys(
+                        "annualIncome",
+                        "monthlyIncomeMean",
+                        "monthlyIncomeVolatility",
+                        "debtToIncomeRatio",
+                        "existingDebtAmount",
+                        "delinquencyCount",
+                        "platformSettlementMonths",
+                        "platformSettlementMean",
+                        "platformSettlementVolatility",
+                        "contractDurationMonths",
+                        "incomeDeclarationAvailable",
+                        "telecomPaymentDelinquencyCount");
+
+        service.handleGovernanceReviewStarted(reviewStarted(created.applicationId()));
+        EventEnvelope evidenceRequested = event(
+                "governance.evidence.requested.v1",
+                "governance-service",
+                created.applicationId(),
+                UUID.fromString("30000000-0000-4000-8000-000000000016"),
+                UUID.randomUUID(),
+                Map.of(
+                        "requestId", "20000000-0000-4000-8000-000000000016",
+                        "decisionCaseId", "case-1001",
+                        "applicationId", created.applicationId().toString(),
+                        "evaluationRunId", "30000000-0000-4000-8000-000000000016",
+                        "requestedEvidenceTypes", List.of("TRANSACTION_EXPLANATION"),
+                        "reasonCodes", List.of("UNCONFIRMED_TRANSACTION_ANOMALY")
+                )
+        );
+        service.handleEvidenceRequested(evidenceRequested);
+        service.updateEvidence(
+                new EvidenceUpdateCommand(
+                        created.applicationId(),
+                        "case-1001",
+                        evidenceRequested.eventId(),
+                        List.of("evidence://transaction-explanation/1")
+                ),
+                FinancialSnapshotInput.fromCreateRequest(
+                        validRequest("loan-evidence-feature-001", "30000000.00", "6100000.00"))
+        );
+
+        var storedFirstSnapshot = featureSnapshots.get(created.applicationId(), "snapshot-v1");
+        var secondSnapshot = featureSnapshots.get(created.applicationId(), "snapshot-v2");
+        assertThat(storedFirstSnapshot.featurePayloadDigest()).isEqualTo(firstSnapshot.featurePayloadDigest());
+        assertThat(secondSnapshot.featurePayloadDigest()).isNotEqualTo(firstSnapshot.featurePayloadDigest());
     }
 
     @Test
@@ -296,15 +365,21 @@ class LoanApplicationServiceIntegrationTest {
     }
 
     private LoanApplicationCreateRequest validRequest(String idempotencyKey, String requestedAmount) {
+        return validRequest(idempotencyKey, requestedAmount, "5200000.00");
+    }
+
+    private LoanApplicationCreateRequest validRequest(String idempotencyKey, String requestedAmount,
+                                                      String monthlyIncomeAmount) {
         return new LoanApplicationCreateRequest(
                 "1.0.0",
                 "synthetic:applicant-001",
                 requestedAmount,
                 "KRW",
-                List.of(new LoanApplicationCreateRequest.MonthlyIncomeRequest("2026-06", "5200000.00", "masked:income-2026-06")),
+                List.of(new LoanApplicationCreateRequest.MonthlyIncomeRequest("2026-06", monthlyIncomeAmount, "masked:income-2026-06")),
                 new LoanApplicationCreateRequest.DebtSummaryRequest("4000000.00", "350000.00", List.of("masked:debt-summary-001")),
                 new LoanApplicationCreateRequest.DelinquencySummaryRequest(0, 0, List.of("masked:delinquency-001")),
                 new LoanApplicationCreateRequest.PlatformSettlementSummaryRequest("2026-Q2", "18000000.00", List.of("synthetic:settlement-q2")),
+                new LoanApplicationCreateRequest.Phase2FeatureSourceRequest("0.081", 36, 0),
                 List.of("synthetic:risk-signal-001"),
                 idempotencyKey
         );

@@ -23,6 +23,7 @@ public record EvidenceUpdateRequest(
             @Valid @NotNull DebtSummaryRequest debtSummary,
             @Valid @NotNull DelinquencySummaryRequest delinquencySummary,
             @Valid @NotNull PlatformSettlementSummaryRequest platformSettlementSummary,
+            @Valid @NotNull Phase2FeatureSourceRequest phase2FeatureSource,
             @NotEmpty List<@Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String> riskSignalReferences
     ) {
     }
@@ -52,6 +53,13 @@ public record EvidenceUpdateRequest(
             @NotBlank String period,
             @Pattern(regexp = "^(0|[1-9][0-9]*)(\\.[0-9]{1,2})?$") String grossSettlementAmount,
             @NotEmpty List<@Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String> sourceReferences
+    ) {
+    }
+
+    public record Phase2FeatureSourceRequest(
+            @Pattern(regexp = "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$") String platformSettlementVolatility,
+            @Min(1) int contractDurationMonths,
+            @Min(0) int telecomPaymentDelinquencyCount
     ) {
     }
 }

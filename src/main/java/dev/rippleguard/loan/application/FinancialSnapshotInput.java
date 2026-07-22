@@ -11,6 +11,7 @@ public record FinancialSnapshotInput(
         DebtSummaryInput debtSummary,
         DelinquencySummaryInput delinquencySummary,
         PlatformSettlementSummaryInput platformSettlementSummary,
+        Phase2FeatureSourceInput phase2FeatureSource,
         List<String> riskSignalReferences
 ) {
     public static FinancialSnapshotInput fromCreateRequest(LoanApplicationCreateRequest request) {
@@ -36,6 +37,11 @@ public record FinancialSnapshotInput(
                         request.platformSettlementSummary().grossSettlementAmount(),
                         request.platformSettlementSummary().sourceReferences()
                 ),
+                new Phase2FeatureSourceInput(
+                        request.phase2FeatureSource().platformSettlementVolatility(),
+                        request.phase2FeatureSource().contractDurationMonths(),
+                        request.phase2FeatureSource().telecomPaymentDelinquencyCount()
+                ),
                 request.riskSignalReferences()
         );
     }
@@ -50,5 +56,10 @@ public record FinancialSnapshotInput(
     }
 
     public record PlatformSettlementSummaryInput(String period, String grossSettlementAmount, List<String> sourceReferences) {
+    }
+
+    public record Phase2FeatureSourceInput(String platformSettlementVolatility,
+                                           int contractDurationMonths,
+                                           int telecomPaymentDelinquencyCount) {
     }
 }

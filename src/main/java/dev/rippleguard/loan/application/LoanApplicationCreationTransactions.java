@@ -29,6 +29,7 @@ public class LoanApplicationCreationTransactions {
     private final FinancialSnapshotRepository snapshots;
     private final MonthlyIncomeRepository monthlyIncomes;
     private final OutboxEventRepository outbox;
+    private final Phase2FeatureSnapshotService featureSnapshots;
     private final JsonSupport json;
     private final Clock clock;
 
@@ -36,12 +37,14 @@ public class LoanApplicationCreationTransactions {
                                                FinancialSnapshotRepository snapshots,
                                                MonthlyIncomeRepository monthlyIncomes,
                                                OutboxEventRepository outbox,
+                                               Phase2FeatureSnapshotService featureSnapshots,
                                                JsonSupport json,
                                                Clock clock) {
         this.applications = applications;
         this.snapshots = snapshots;
         this.monthlyIncomes = monthlyIncomes;
         this.outbox = outbox;
+        this.featureSnapshots = featureSnapshots;
         this.json = json;
         this.clock = clock;
     }
@@ -109,6 +112,7 @@ public class LoanApplicationCreationTransactions {
                 money(income.amount()),
                 income.sourceReference()
         )));
+        featureSnapshots.create(application, snapshot, input, now);
     }
 
     private OutboxEventEntity submittedEvent(UUID applicationId, LoanApplicationCreateRequest request, Instant now) {
