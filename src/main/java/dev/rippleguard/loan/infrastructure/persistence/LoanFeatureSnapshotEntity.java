@@ -15,8 +15,7 @@ import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "loan_feature_snapshot", uniqueConstraints = {
-        @UniqueConstraint(name = "uq_loan_feature_snapshot_version", columnNames = {"application_id", "snapshot_version"}),
-        @UniqueConstraint(name = "uq_loan_feature_snapshot_financial", columnNames = {"financial_snapshot_id"})
+        @UniqueConstraint(name = "uq_loan_feature_snapshot_version", columnNames = {"application_id", "snapshot_version"})
 })
 public class LoanFeatureSnapshotEntity {
     @Id

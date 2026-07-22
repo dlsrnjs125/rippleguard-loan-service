@@ -39,7 +39,7 @@ public interface LoanFeatureSnapshotRepository extends JpaRepository<LoanFeature
                 :sourceLoanApplicationVersion,
                 :createdAt
             )
-            on conflict do nothing
+            on conflict (application_id, snapshot_version) do nothing
             """, nativeQuery = true)
     int insertIfAbsent(@Param("snapshotId") UUID snapshotId,
                        @Param("applicationId") UUID applicationId,

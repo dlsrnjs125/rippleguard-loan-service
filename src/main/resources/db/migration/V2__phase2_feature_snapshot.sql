@@ -11,7 +11,6 @@ create table loan_feature_snapshot (
     source_loan_application_version integer not null,
     created_at timestamp with time zone not null,
     constraint uq_loan_feature_snapshot_version unique (application_id, snapshot_version),
-    constraint uq_loan_feature_snapshot_financial unique (financial_snapshot_id),
     constraint ck_loan_feature_snapshot_digest check (feature_payload_digest like 'sha256:%' and length(feature_payload_digest) = 71),
     constraint ck_loan_feature_snapshot_source_version check (source_loan_application_version > 0)
 );

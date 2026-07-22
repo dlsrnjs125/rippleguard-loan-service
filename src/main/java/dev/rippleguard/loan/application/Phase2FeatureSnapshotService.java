@@ -5,9 +5,9 @@ import dev.rippleguard.loan.infrastructure.persistence.LoanApplicationEntity;
 import dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotEntity;
 import dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotRepository;
 import dev.rippleguard.loan.interfaces.rest.Phase2FeatureSnapshotResponse;
-import java.sql.SQLException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,7 +33,6 @@ public class Phase2FeatureSnapshotService {
     private final LoanFeatureSnapshotRepository snapshots;
     private final ContractSchemaValidator contracts;
     private final JsonSupport json;
-    private final boolean atomicInsertSupported;
 
     public Phase2FeatureSnapshotService(LoanFeatureSnapshotRepository snapshots,
                                         ContractSchemaValidator contracts,
@@ -42,7 +41,7 @@ public class Phase2FeatureSnapshotService {
         this.snapshots = snapshots;
         this.contracts = contracts;
         this.json = json;
-        this.atomicInsertSupported = supportsAtomicInsert(dataSource);
+        requirePostgres(dataSource);
     }
 
     @Transactional
@@ -65,38 +64,21 @@ public class Phase2FeatureSnapshotService {
     private LoanFeatureSnapshotEntity insertPrepared(
             LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
             PreparedSnapshot prepared) {
-        if (atomicInsertSupported) {
-            snapshots.insertIfAbsent(
-                    prepared.snapshotId(),
-                    application.getApplicationId(),
-                    financialSnapshot.getSnapshotId(),
-                    prepared.snapshotVersion(),
-                    SNAPSHOT_SCHEMA_VERSION,
-                    FEATURE_SCHEMA_VERSION,
-                    prepared.featurePayloadJson(),
-                    prepared.featurePayloadDigest(),
-                    prepared.snapshotReferenceJson(),
-                    application.getSnapshotVersion(),
-                    prepared.createdAt()
-            );
-        } else {
-            var existing = snapshots.findByApplicationApplicationIdAndSnapshotVersion(
-                    application.getApplicationId(), prepared.snapshotVersion());
-            if (existing.isEmpty()) {
-                snapshots.saveAndFlush(new LoanFeatureSnapshotEntity(
-                        prepared.snapshotId(),
-                        application,
-                        financialSnapshot,
-                        prepared.snapshotVersion(),
-                        SNAPSHOT_SCHEMA_VERSION,
-                        FEATURE_SCHEMA_VERSION,
-                        prepared.featurePayloadJson(),
-                        prepared.featurePayloadDigest(),
-                        prepared.snapshotReferenceJson(),
-                        application.getSnapshotVersion(),
-                        prepared.createdAt()
-                ));
-            }
+        int inserted = snapshots.insertIfAbsent(
+                prepared.snapshotId(),
+                application.getApplicationId(),
+                financialSnapshot.getSnapshotId(),
+                prepared.snapshotVersion(),
+                SNAPSHOT_SCHEMA_VERSION,
+                FEATURE_SCHEMA_VERSION,
+                prepared.featurePayloadJson(),
+                prepared.featurePayloadDigest(),
+                prepared.snapshotReferenceJson(),
+                application.getSnapshotVersion(),
+                prepared.createdAt()
+        );
+        if (inserted != 0 && inserted != 1) {
+            throw new IllegalStateException("Unexpected feature snapshot insert count: " + inserted);
         }
         return snapshots.findByApplicationApplicationIdAndSnapshotVersion(
                         application.getApplicationId(), prepared.snapshotVersion())
@@ -271,9 +253,13 @@ public class Phase2FeatureSnapshotService {
                 .stripTrailingZeros();
     }
 
-    private boolean supportsAtomicInsert(DataSource dataSource) {
+    private void requirePostgres(DataSource dataSource) {
         try (var connection = dataSource.getConnection()) {
-            return connection.getMetaData().getDatabaseProductName().toLowerCase().contains("postgresql");
+            String productName = connection.getMetaData().getDatabaseProductName();
+            if (!productName.toLowerCase().contains("postgresql")) {
+                throw new IllegalStateException(
+                        "Phase 2 feature snapshot materialization requires PostgreSQL but found " + productName);
+            }
         } catch (SQLException exception) {
             throw new IllegalStateException("Unable to detect database product", exception);
         }
