@@ -237,6 +237,32 @@ class PostgresMigrationIntegrationTest {
     }
 
     @Test
+    void featureSnapshotRejectsReusingFinancialSnapshotForAnotherVersion() {
+        SnapshotFixture fixture = snapshotFixture("postgres-financial-snapshot-unique");
+        FinancialSnapshotInput input = FinancialSnapshotInput.fromCreateRequest(
+                validRequest("postgres-financial-snapshot-unique-input", "25000000.00"));
+        var created = featureSnapshotService.createIfSourcePresent(
+                fixture.application(), fixture.financialSnapshot(), input, Instant.now()).orElseThrow();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> transactions.execute(status ->
+                featureSnapshots.insertIfAbsent(
+                        UUID.randomUUID(),
+                        fixture.application().getApplicationId(),
+                        fixture.financialSnapshot().getSnapshotId(),
+                        "snapshot-v2",
+                        created.getSnapshotSchemaVersion(),
+                        created.getFeatureSchemaVersion(),
+                        created.getFeaturePayload(),
+                        created.getFeaturePayloadDigest(),
+                        created.getSnapshotReference(),
+                        fixture.application().getSnapshotVersion(),
+                        Instant.now()
+                )))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThat(featureSnapshots.count()).isEqualTo(1);
+    }
+
+    @Test
     void concurrentDecisionCommandAndEvidenceRequestAppliesOnlyOneStateChange() throws Exception {
         LoanApplicationResponse created = service.create(validRequest("postgres-optimistic-race", "25000000.00"));
         EventEnvelope reviewStarted = reviewStarted(created.applicationId());

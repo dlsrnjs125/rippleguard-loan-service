@@ -1,6 +1,7 @@
 package dev.rippleguard.loan.application;
 
 import dev.rippleguard.loan.infrastructure.persistence.FinancialSnapshotEntity;
+import dev.rippleguard.loan.infrastructure.persistence.FinancialSnapshotRepository;
 import dev.rippleguard.loan.infrastructure.persistence.LoanApplicationEntity;
 import dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotEntity;
 import dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotRepository;
@@ -31,14 +32,17 @@ public class Phase2FeatureSnapshotService {
     private static final int FEATURE_SCALE = 6;
 
     private final LoanFeatureSnapshotRepository snapshots;
+    private final FinancialSnapshotRepository financialSnapshots;
     private final ContractSchemaValidator contracts;
     private final JsonSupport json;
 
     public Phase2FeatureSnapshotService(LoanFeatureSnapshotRepository snapshots,
+                                        FinancialSnapshotRepository financialSnapshots,
                                         ContractSchemaValidator contracts,
                                         JsonSupport json,
                                         DataSource dataSource) {
         this.snapshots = snapshots;
+        this.financialSnapshots = financialSnapshots;
         this.contracts = contracts;
         this.json = json;
         requirePostgres(dataSource);
@@ -64,10 +68,14 @@ public class Phase2FeatureSnapshotService {
     private LoanFeatureSnapshotEntity insertPrepared(
             LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
             PreparedSnapshot prepared) {
+        FinancialSnapshotEntity lockedFinancialSnapshot = financialSnapshots
+                .findLockedBySnapshotId(financialSnapshot.getSnapshotId())
+                .orElseThrow(() -> new NotFoundException(
+                        "Financial snapshot not found: " + financialSnapshot.getSnapshotId()));
         int inserted = snapshots.insertIfAbsent(
                 prepared.snapshotId(),
                 application.getApplicationId(),
-                financialSnapshot.getSnapshotId(),
+                lockedFinancialSnapshot.getSnapshotId(),
                 prepared.snapshotVersion(),
                 SNAPSHOT_SCHEMA_VERSION,
                 FEATURE_SCHEMA_VERSION,
