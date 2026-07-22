@@ -200,10 +200,10 @@ class PostgresMigrationIntegrationTest {
                 validRequest("postgres-direct-feature-input", "25000000.00"));
 
         var results = runConcurrently(
-                () -> featureSnapshotService.createIdempotently(
-                        fixture.application(), fixture.financialSnapshot(), input, Instant.now()),
-                () -> featureSnapshotService.createIdempotently(
-                        fixture.application(), fixture.financialSnapshot(), input, Instant.now())
+                () -> featureSnapshotService.createIfSourcePresent(
+                        fixture.application(), fixture.financialSnapshot(), input, Instant.now()).orElseThrow(),
+                () -> featureSnapshotService.createIfSourcePresent(
+                        fixture.application(), fixture.financialSnapshot(), input, Instant.now()).orElseThrow()
         );
 
         assertThat(results).allMatch(result -> result instanceof dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotEntity);
@@ -222,10 +222,10 @@ class PostgresMigrationIntegrationTest {
         FinancialSnapshotInput second = FinancialSnapshotInput.fromCreateRequest(
                 validRequest("postgres-direct-feature-second", "25000000.00", "6100000.00"));
 
-        var created = featureSnapshotService.createIdempotently(
-                fixture.application(), fixture.financialSnapshot(), first, Instant.now());
+        var created = featureSnapshotService.createIfSourcePresent(
+                fixture.application(), fixture.financialSnapshot(), first, Instant.now()).orElseThrow();
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> featureSnapshotService.createIdempotently(
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> featureSnapshotService.createIfSourcePresent(
                         fixture.application(), fixture.financialSnapshot(), second, Instant.now()))
                 .isInstanceOf(ConflictException.class)
                 .hasMessageContaining("FEATURE_SNAPSHOT_CONFLICT");

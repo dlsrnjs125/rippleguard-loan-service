@@ -5,6 +5,7 @@ import dev.rippleguard.loan.infrastructure.persistence.LoanApplicationEntity;
 import dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotEntity;
 import dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotRepository;
 import dev.rippleguard.loan.interfaces.rest.Phase2FeatureSnapshotResponse;
+import java.sql.SQLException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
@@ -15,12 +16,9 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.springframework.dao.DataIntegrityViolationException;
+import javax.sql.DataSource;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class Phase2FeatureSnapshotService {
@@ -35,17 +33,16 @@ public class Phase2FeatureSnapshotService {
     private final LoanFeatureSnapshotRepository snapshots;
     private final ContractSchemaValidator contracts;
     private final JsonSupport json;
-    private final TransactionTemplate transactions;
+    private final boolean atomicInsertSupported;
 
     public Phase2FeatureSnapshotService(LoanFeatureSnapshotRepository snapshots,
                                         ContractSchemaValidator contracts,
                                         JsonSupport json,
-                                        PlatformTransactionManager transactionManager) {
+                                        DataSource dataSource) {
         this.snapshots = snapshots;
         this.contracts = contracts;
         this.json = json;
-        this.transactions = new TransactionTemplate(transactionManager);
-        this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.atomicInsertSupported = supportsAtomicInsert(dataSource);
     }
 
     @Transactional
@@ -58,24 +55,6 @@ public class Phase2FeatureSnapshotService {
         return Optional.of(insertOrReturnExisting(application, financialSnapshot, input, now));
     }
 
-    public LoanFeatureSnapshotEntity createIdempotently(
-            LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
-            FinancialSnapshotInput input, Instant now) {
-        if (input.phase2FeatureSource() == null) {
-            throw new IllegalArgumentException("Phase 2 feature source is required");
-        }
-        PreparedSnapshot prepared = prepare(application, financialSnapshot, input, now);
-        try {
-            return transactions.execute(status -> insertPrepared(application, financialSnapshot, prepared));
-        } catch (DataIntegrityViolationException conflict) {
-            return transactions.execute(status ->
-                    snapshots.findByApplicationApplicationIdAndSnapshotVersion(
-                                    application.getApplicationId(), financialSnapshot.getSnapshotVersion())
-                            .map(existing -> requireSameDigest(existing, prepared.featurePayloadDigest()))
-                            .orElseThrow(() -> conflict));
-        }
-    }
-
     private LoanFeatureSnapshotEntity insertOrReturnExisting(
             LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
             FinancialSnapshotInput input, Instant now) {
@@ -86,25 +65,45 @@ public class Phase2FeatureSnapshotService {
     private LoanFeatureSnapshotEntity insertPrepared(
             LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
             PreparedSnapshot prepared) {
-        var existing = snapshots.findByApplicationApplicationIdAndSnapshotVersion(
-                application.getApplicationId(), prepared.snapshotVersion());
-        if (existing.isPresent()) {
-            return requireSameDigest(existing.get(), prepared.featurePayloadDigest());
+        if (atomicInsertSupported) {
+            snapshots.insertIfAbsent(
+                    prepared.snapshotId(),
+                    application.getApplicationId(),
+                    financialSnapshot.getSnapshotId(),
+                    prepared.snapshotVersion(),
+                    SNAPSHOT_SCHEMA_VERSION,
+                    FEATURE_SCHEMA_VERSION,
+                    prepared.featurePayloadJson(),
+                    prepared.featurePayloadDigest(),
+                    prepared.snapshotReferenceJson(),
+                    application.getSnapshotVersion(),
+                    prepared.createdAt()
+            );
+        } else {
+            var existing = snapshots.findByApplicationApplicationIdAndSnapshotVersion(
+                    application.getApplicationId(), prepared.snapshotVersion());
+            if (existing.isEmpty()) {
+                snapshots.saveAndFlush(new LoanFeatureSnapshotEntity(
+                        prepared.snapshotId(),
+                        application,
+                        financialSnapshot,
+                        prepared.snapshotVersion(),
+                        SNAPSHOT_SCHEMA_VERSION,
+                        FEATURE_SCHEMA_VERSION,
+                        prepared.featurePayloadJson(),
+                        prepared.featurePayloadDigest(),
+                        prepared.snapshotReferenceJson(),
+                        application.getSnapshotVersion(),
+                        prepared.createdAt()
+                ));
+            }
         }
-
-        return snapshots.saveAndFlush(new LoanFeatureSnapshotEntity(
-                prepared.snapshotId(),
-                application,
-                financialSnapshot,
-                prepared.snapshotVersion(),
-                SNAPSHOT_SCHEMA_VERSION,
-                FEATURE_SCHEMA_VERSION,
-                prepared.featurePayloadJson(),
-                prepared.featurePayloadDigest(),
-                prepared.snapshotReferenceJson(),
-                application.getSnapshotVersion(),
-                prepared.createdAt()
-        ));
+        return snapshots.findByApplicationApplicationIdAndSnapshotVersion(
+                        application.getApplicationId(), prepared.snapshotVersion())
+                .map(existing -> requireSameDigest(existing, prepared.featurePayloadDigest()))
+                .orElseThrow(() -> new IllegalStateException(
+                        "Feature snapshot insert did not create or find row: " + application.getApplicationId()
+                                + " " + prepared.snapshotVersion()));
     }
 
     private PreparedSnapshot prepare(LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
@@ -270,6 +269,14 @@ public class Phase2FeatureSnapshotService {
     private BigDecimal number(BigDecimal value) {
         return value.setScale(FEATURE_SCALE, RoundingMode.HALF_UP)
                 .stripTrailingZeros();
+    }
+
+    private boolean supportsAtomicInsert(DataSource dataSource) {
+        try (var connection = dataSource.getConnection()) {
+            return connection.getMetaData().getDatabaseProductName().toLowerCase().contains("postgresql");
+        } catch (SQLException exception) {
+            throw new IllegalStateException("Unable to detect database product", exception);
+        }
     }
 
     private record PreparedSnapshot(UUID snapshotId, String snapshotVersion, String featurePayloadJson,
