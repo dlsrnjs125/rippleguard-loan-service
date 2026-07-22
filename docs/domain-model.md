@@ -54,9 +54,11 @@ Feature source mapping:
 | `delinquencyCount` | `delinquencySummary.delinquencyCount` | integer | count | required | direct mapping |
 | `platformSettlementMonths` | `platformSettlementSummary.period` | integer | months | supported period required | `PnM` and `n-months` parse directly; `YYYY-Qn` maps to 3 months |
 | `platformSettlementMean` | `platformSettlementSummary.grossSettlementAmount`, `platformSettlementSummary.period` | number | KRW/month | settlement amount and supported period required | gross settlement divided by parsed months |
-| `platformSettlementVolatility` | `phase2FeatureSource.platformSettlementVolatility` | number | ratio | required | direct mapping from explicit Phase 2 source |
-| `contractDurationMonths` | `phase2FeatureSource.contractDurationMonths` | integer | months | required | direct mapping |
-| `incomeDeclarationAvailable` | `incomeHistory[]` | boolean | n/a | income history required | true when declared income source was submitted |
-| `telecomPaymentDelinquencyCount` | `phase2FeatureSource.telecomPaymentDelinquencyCount` | integer | count | required | direct mapping |
+| `platformSettlementVolatility` | `phase2FeatureSource.platformSettlementVolatility.value` with source reference/type/observed time | number | ratio | verified settlement history source required | direct mapping from settlement-history source summary |
+| `contractDurationMonths` | `phase2FeatureSource.contractDuration.value` with source reference/type/observed time | integer | months | verified contract source required | direct mapping from contract evidence summary |
+| `incomeDeclarationAvailable` | `phase2FeatureSource.incomeDeclaration.available` with source reference/type/observed time | boolean | n/a | income declaration source required | direct mapping from income declaration evidence summary |
+| `telecomPaymentDelinquencyCount` | `phase2FeatureSource.telecomDelinquency.value` with source reference/type/observed time | integer | count | telecom history source required | direct mapping from telecom evidence summary |
 
 Required Phase 2 feature sources must be supplied explicitly. The service does not fill unsupported features with zero, means, or fallback application state.
+
+Generated feature payloads and snapshot references are validated against pinned copies of the official RippleGuard Contracts JSON Schemas before persistence. Contract validation failure rolls back the snapshot and outbox transaction.

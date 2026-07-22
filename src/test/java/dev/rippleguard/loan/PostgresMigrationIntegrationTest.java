@@ -9,6 +9,7 @@ import dev.rippleguard.loan.application.EventEnvelope;
 import dev.rippleguard.loan.application.LoanApplicationService;
 import dev.rippleguard.loan.domain.LoanApplicationStatus;
 import dev.rippleguard.loan.domain.OutboxStatus;
+import dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotRepository;
 import dev.rippleguard.loan.infrastructure.persistence.OutboxEventEntity;
 import dev.rippleguard.loan.infrastructure.persistence.OutboxEventRepository;
 import dev.rippleguard.loan.interfaces.rest.LoanApplicationCreateRequest;
@@ -61,6 +62,9 @@ class PostgresMigrationIntegrationTest {
 
     @Autowired
     OutboxEventRepository outbox;
+
+    @Autowired
+    LoanFeatureSnapshotRepository featureSnapshots;
 
     @Autowired
     LoanApplicationService service;
@@ -157,6 +161,10 @@ class PostgresMigrationIntegrationTest {
                 .map(LoanApplicationResponse.class::cast)
                 .map(LoanApplicationResponse::applicationId)
                 .distinct()).hasSize(1);
+        LoanApplicationResponse response = (LoanApplicationResponse) results.get(0);
+        assertThat(featureSnapshots.findByApplicationApplicationIdAndSnapshotVersion(
+                response.applicationId(), "snapshot-v1")).isPresent();
+        assertThat(featureSnapshots.count()).isEqualTo(1);
     }
 
     @Test
@@ -231,9 +239,23 @@ class PostgresMigrationIntegrationTest {
                 new LoanApplicationCreateRequest.DebtSummaryRequest("4000000.00", "350000.00", List.of("masked:debt-summary-001")),
                 new LoanApplicationCreateRequest.DelinquencySummaryRequest(0, 0, List.of("masked:delinquency-001")),
                 new LoanApplicationCreateRequest.PlatformSettlementSummaryRequest("2026-Q2", "18000000.00", List.of("synthetic:settlement-q2")),
-                new LoanApplicationCreateRequest.Phase2FeatureSourceRequest("0.081", 36, 0),
+                phase2FeatureSource(),
                 List.of("synthetic:risk-signal-001"),
                 idempotencyKey
+        );
+    }
+
+    private LoanApplicationCreateRequest.Phase2FeatureSourceRequest phase2FeatureSource() {
+        Instant observedAt = Instant.parse("2026-07-21T10:00:00Z");
+        return new LoanApplicationCreateRequest.Phase2FeatureSourceRequest(
+                new LoanApplicationCreateRequest.SettlementVolatilitySourceRequest(
+                        "0.081", "masked:settlement-history-001", "SETTLEMENT_HISTORY", observedAt),
+                new LoanApplicationCreateRequest.ContractDurationSourceRequest(
+                        36, "masked:contract-001", "CONTRACT_EVIDENCE", observedAt),
+                new LoanApplicationCreateRequest.IncomeDeclarationSourceRequest(
+                        true, "masked:income-declaration-001", "INCOME_DECLARATION", observedAt),
+                new LoanApplicationCreateRequest.TelecomDelinquencySourceRequest(
+                        0, "masked:telecom-history-001", "TELECOM_HISTORY", observedAt)
         );
     }
 

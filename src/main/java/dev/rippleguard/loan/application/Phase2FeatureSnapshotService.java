@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,10 +29,14 @@ public class Phase2FeatureSnapshotService {
     private static final int FEATURE_SCALE = 6;
 
     private final LoanFeatureSnapshotRepository snapshots;
+    private final ContractSchemaValidator contracts;
     private final JsonSupport json;
 
-    public Phase2FeatureSnapshotService(LoanFeatureSnapshotRepository snapshots, JsonSupport json) {
+    public Phase2FeatureSnapshotService(LoanFeatureSnapshotRepository snapshots,
+                                        ContractSchemaValidator contracts,
+                                        JsonSupport json) {
         this.snapshots = snapshots;
+        this.contracts = contracts;
         this.json = json;
     }
 
@@ -43,6 +48,7 @@ public class Phase2FeatureSnapshotService {
         String featurePayloadDigest = "sha256:" + json.sha256(json.canonicalJson(featurePayloadWithoutDigest));
         Map<String, Object> featurePayload = new LinkedHashMap<>(featurePayloadWithoutDigest);
         featurePayload.put("featurePayloadDigest", featurePayloadDigest);
+        contracts.validate(ContractSchemaValidator.FEATURE_PAYLOAD_SCHEMA, featurePayload);
 
         UUID snapshotId = UUID.randomUUID();
         Map<String, Object> snapshotReference = new LinkedHashMap<>();
@@ -56,8 +62,16 @@ public class Phase2FeatureSnapshotService {
         snapshotReference.put("snapshotReference",
                 "snapshot://loan-feature/" + application.getApplicationId() + "/" + snapshotVersion);
         snapshotReference.put("referenceType", "MATERIALIZED_FEATURES");
+        contracts.validate(ContractSchemaValidator.SNAPSHOT_REFERENCE_SCHEMA, snapshotReference);
 
-        return snapshots.save(new LoanFeatureSnapshotEntity(
+        var existing = snapshots.findByApplicationApplicationIdAndSnapshotVersion(
+                application.getApplicationId(), snapshotVersion);
+        if (existing.isPresent()) {
+            return requireSameDigest(existing.get(), featurePayloadDigest);
+        }
+
+        try {
+            return snapshots.saveAndFlush(new LoanFeatureSnapshotEntity(
                 snapshotId,
                 application,
                 financialSnapshot,
@@ -69,7 +83,13 @@ public class Phase2FeatureSnapshotService {
                 json.canonicalJson(snapshotReference),
                 application.getSnapshotVersion(),
                 now
-        ));
+            ));
+        } catch (DataIntegrityViolationException exception) {
+            return snapshots.findByApplicationApplicationIdAndSnapshotVersion(
+                            application.getApplicationId(), snapshotVersion)
+                    .map(existingSnapshot -> requireSameDigest(existingSnapshot, featurePayloadDigest))
+                    .orElseThrow(() -> exception);
+        }
     }
 
     @Transactional(readOnly = true)
@@ -134,13 +154,20 @@ public class Phase2FeatureSnapshotService {
         features.put("delinquencyCount", input.delinquencySummary().delinquencyCount());
         features.put("platformSettlementMonths", settlementMonths);
         features.put("platformSettlementMean", number(platformSettlementMean));
-        features.put("platformSettlementVolatility",
-                number(new BigDecimal(input.phase2FeatureSource().platformSettlementVolatility())));
-        features.put("contractDurationMonths", input.phase2FeatureSource().contractDurationMonths());
-        features.put("incomeDeclarationAvailable", true);
+        features.put("platformSettlementVolatility", number(
+                new BigDecimal(input.phase2FeatureSource().platformSettlementVolatility().value())));
+        features.put("contractDurationMonths", input.phase2FeatureSource().contractDuration().value());
+        features.put("incomeDeclarationAvailable", input.phase2FeatureSource().incomeDeclaration().available());
         features.put("telecomPaymentDelinquencyCount",
-                input.phase2FeatureSource().telecomPaymentDelinquencyCount());
+                input.phase2FeatureSource().telecomDelinquency().value());
         return features;
+    }
+
+    private LoanFeatureSnapshotEntity requireSameDigest(LoanFeatureSnapshotEntity existing, String incomingDigest) {
+        if (!existing.getFeaturePayloadDigest().equals(incomingDigest)) {
+            throw new ConflictException("FEATURE_SNAPSHOT_CONFLICT");
+        }
+        return existing;
     }
 
     private BigDecimal mean(List<BigDecimal> values) {
@@ -192,9 +219,8 @@ public class Phase2FeatureSnapshotService {
         return new BigDecimal(value);
     }
 
-    private double number(BigDecimal value) {
+    private BigDecimal number(BigDecimal value) {
         return value.setScale(FEATURE_SCALE, RoundingMode.HALF_UP)
-                .stripTrailingZeros()
-                .doubleValue();
+                .stripTrailingZeros();
     }
 }

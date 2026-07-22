@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.time.Instant;
 import java.util.List;
 
 public record LoanApplicationCreateRequest(
@@ -51,9 +52,42 @@ public record LoanApplicationCreateRequest(
     }
 
     public record Phase2FeatureSourceRequest(
-            @Pattern(regexp = "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$") String platformSettlementVolatility,
-            @Min(1) int contractDurationMonths,
-            @Min(0) int telecomPaymentDelinquencyCount
+            @Valid @NotNull SettlementVolatilitySourceRequest platformSettlementVolatility,
+            @Valid @NotNull ContractDurationSourceRequest contractDuration,
+            @Valid @NotNull IncomeDeclarationSourceRequest incomeDeclaration,
+            @Valid @NotNull TelecomDelinquencySourceRequest telecomDelinquency
+    ) {
+    }
+
+    public record SettlementVolatilitySourceRequest(
+            @Pattern(regexp = "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$") String value,
+            @Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String sourceReference,
+            @NotBlank String sourceType,
+            @NotNull Instant observedAt
+    ) {
+    }
+
+    public record ContractDurationSourceRequest(
+            @Min(1) int value,
+            @Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String sourceReference,
+            @NotBlank String sourceType,
+            @NotNull Instant observedAt
+    ) {
+    }
+
+    public record IncomeDeclarationSourceRequest(
+            boolean available,
+            @Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String sourceReference,
+            @NotBlank String sourceType,
+            @NotNull Instant observedAt
+    ) {
+    }
+
+    public record TelecomDelinquencySourceRequest(
+            @Min(0) int value,
+            @Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String sourceReference,
+            @NotBlank String sourceType,
+            @NotNull Instant observedAt
     ) {
     }
 }

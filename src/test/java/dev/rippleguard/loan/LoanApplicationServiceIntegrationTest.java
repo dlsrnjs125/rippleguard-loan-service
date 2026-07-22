@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.rippleguard.loan.application.ContractSchemaValidator;
 import dev.rippleguard.loan.application.ConflictException;
 import dev.rippleguard.loan.application.EvidenceUpdateCommand;
 import dev.rippleguard.loan.application.EventEnvelope;
@@ -38,6 +39,9 @@ class LoanApplicationServiceIntegrationTest {
 
     @Autowired
     Phase2FeatureSnapshotService featureSnapshots;
+
+    @Autowired
+    ContractSchemaValidator contracts;
 
     @Autowired
     LoanApplicationRepository applications;
@@ -94,6 +98,8 @@ class LoanApplicationServiceIntegrationTest {
         assertThat(firstSnapshot.featurePayloadDigest()).startsWith("sha256:");
         assertThat(firstSnapshot.featurePayload())
                 .containsEntry("featurePayloadDigest", firstSnapshot.featurePayloadDigest());
+        contracts.validate(ContractSchemaValidator.FEATURE_PAYLOAD_SCHEMA, firstSnapshot.featurePayload());
+        contracts.validate(ContractSchemaValidator.SNAPSHOT_REFERENCE_SCHEMA, firstSnapshot.snapshotReference());
         assertThat((Map<String, Object>) firstSnapshot.featurePayload().get("features"))
                 .containsKeys(
                         "annualIncome",
@@ -159,6 +165,17 @@ class LoanApplicationServiceIntegrationTest {
 
         assertThatThrownBy(() -> service.create(validRequest("loan-create-003", "30000000.00")))
                 .isInstanceOf(ConflictException.class);
+    }
+
+    @Test
+    void rejectsFeatureSourceOutsideOfficialContractAndRollsBackSubmission() {
+        assertThatThrownBy(() -> service.create(requestWithContractDuration("loan-create-feature-range", 241)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Contract validation failed");
+
+        assertThat(applications.count()).isZero();
+        assertThat(featureSnapshotRepository.count()).isZero();
+        assertThat(outbox.count()).isZero();
     }
 
     @Test
@@ -379,9 +396,39 @@ class LoanApplicationServiceIntegrationTest {
                 new LoanApplicationCreateRequest.DebtSummaryRequest("4000000.00", "350000.00", List.of("masked:debt-summary-001")),
                 new LoanApplicationCreateRequest.DelinquencySummaryRequest(0, 0, List.of("masked:delinquency-001")),
                 new LoanApplicationCreateRequest.PlatformSettlementSummaryRequest("2026-Q2", "18000000.00", List.of("synthetic:settlement-q2")),
-                new LoanApplicationCreateRequest.Phase2FeatureSourceRequest("0.081", 36, 0),
+                phase2FeatureSource(36),
                 List.of("synthetic:risk-signal-001"),
                 idempotencyKey
+        );
+    }
+
+    private LoanApplicationCreateRequest requestWithContractDuration(String idempotencyKey, int contractDurationMonths) {
+        return new LoanApplicationCreateRequest(
+                "1.0.0",
+                "synthetic:applicant-001",
+                "25000000.00",
+                "KRW",
+                List.of(new LoanApplicationCreateRequest.MonthlyIncomeRequest("2026-06", "5200000.00", "masked:income-2026-06")),
+                new LoanApplicationCreateRequest.DebtSummaryRequest("4000000.00", "350000.00", List.of("masked:debt-summary-001")),
+                new LoanApplicationCreateRequest.DelinquencySummaryRequest(0, 0, List.of("masked:delinquency-001")),
+                new LoanApplicationCreateRequest.PlatformSettlementSummaryRequest("2026-Q2", "18000000.00", List.of("synthetic:settlement-q2")),
+                phase2FeatureSource(contractDurationMonths),
+                List.of("synthetic:risk-signal-001"),
+                idempotencyKey
+        );
+    }
+
+    private LoanApplicationCreateRequest.Phase2FeatureSourceRequest phase2FeatureSource(int contractDurationMonths) {
+        Instant observedAt = Instant.parse("2026-07-21T10:00:00Z");
+        return new LoanApplicationCreateRequest.Phase2FeatureSourceRequest(
+                new LoanApplicationCreateRequest.SettlementVolatilitySourceRequest(
+                        "0.081", "masked:settlement-history-001", "SETTLEMENT_HISTORY", observedAt),
+                new LoanApplicationCreateRequest.ContractDurationSourceRequest(
+                        contractDurationMonths, "masked:contract-001", "CONTRACT_EVIDENCE", observedAt),
+                new LoanApplicationCreateRequest.IncomeDeclarationSourceRequest(
+                        true, "masked:income-declaration-001", "INCOME_DECLARATION", observedAt),
+                new LoanApplicationCreateRequest.TelecomDelinquencySourceRequest(
+                        0, "masked:telecom-history-001", "TELECOM_HISTORY", observedAt)
         );
     }
 

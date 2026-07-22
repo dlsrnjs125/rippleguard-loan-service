@@ -79,9 +79,30 @@ public class InternalEvidenceController {
                         request.platformSettlementSummary().sourceReferences()
                 ),
                 new FinancialSnapshotInput.Phase2FeatureSourceInput(
-                        request.phase2FeatureSource().platformSettlementVolatility(),
-                        request.phase2FeatureSource().contractDurationMonths(),
-                        request.phase2FeatureSource().telecomPaymentDelinquencyCount()
+                        new FinancialSnapshotInput.DecimalFeatureSourceInput(
+                                request.phase2FeatureSource().platformSettlementVolatility().value(),
+                                request.phase2FeatureSource().platformSettlementVolatility().sourceReference(),
+                                request.phase2FeatureSource().platformSettlementVolatility().sourceType(),
+                                request.phase2FeatureSource().platformSettlementVolatility().observedAt()
+                        ),
+                        new FinancialSnapshotInput.IntegerFeatureSourceInput(
+                                request.phase2FeatureSource().contractDuration().value(),
+                                request.phase2FeatureSource().contractDuration().sourceReference(),
+                                request.phase2FeatureSource().contractDuration().sourceType(),
+                                request.phase2FeatureSource().contractDuration().observedAt()
+                        ),
+                        new FinancialSnapshotInput.BooleanFeatureSourceInput(
+                                request.phase2FeatureSource().incomeDeclaration().available(),
+                                request.phase2FeatureSource().incomeDeclaration().sourceReference(),
+                                request.phase2FeatureSource().incomeDeclaration().sourceType(),
+                                request.phase2FeatureSource().incomeDeclaration().observedAt()
+                        ),
+                        new FinancialSnapshotInput.IntegerFeatureSourceInput(
+                                request.phase2FeatureSource().telecomDelinquency().value(),
+                                request.phase2FeatureSource().telecomDelinquency().sourceReference(),
+                                request.phase2FeatureSource().telecomDelinquency().sourceType(),
+                                request.phase2FeatureSource().telecomDelinquency().observedAt()
+                        )
                 ),
                 request.riskSignalReferences()
         );
