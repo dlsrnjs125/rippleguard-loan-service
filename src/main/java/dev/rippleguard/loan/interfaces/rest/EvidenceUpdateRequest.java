@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -23,6 +24,7 @@ public record EvidenceUpdateRequest(
             @Valid @NotNull DebtSummaryRequest debtSummary,
             @Valid @NotNull DelinquencySummaryRequest delinquencySummary,
             @Valid @NotNull PlatformSettlementSummaryRequest platformSettlementSummary,
+            @Valid @NotNull Phase2FeatureSourceRequest phase2FeatureSource,
             @NotEmpty List<@Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String> riskSignalReferences
     ) {
     }
@@ -52,6 +54,46 @@ public record EvidenceUpdateRequest(
             @NotBlank String period,
             @Pattern(regexp = "^(0|[1-9][0-9]*)(\\.[0-9]{1,2})?$") String grossSettlementAmount,
             @NotEmpty List<@Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String> sourceReferences
+    ) {
+    }
+
+    public record Phase2FeatureSourceRequest(
+            @Valid @NotNull SettlementVolatilitySourceRequest platformSettlementVolatility,
+            @Valid @NotNull ContractDurationSourceRequest contractDuration,
+            @Valid @NotNull IncomeDeclarationSourceRequest incomeDeclaration,
+            @Valid @NotNull TelecomDelinquencySourceRequest telecomDelinquency
+    ) {
+    }
+
+    public record SettlementVolatilitySourceRequest(
+            @Pattern(regexp = "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$") String value,
+            @Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String sourceReference,
+            @Pattern(regexp = "^SETTLEMENT_HISTORY$") String sourceType,
+            @NotNull Instant observedAt
+    ) {
+    }
+
+    public record ContractDurationSourceRequest(
+            @Min(1) int value,
+            @Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String sourceReference,
+            @Pattern(regexp = "^CONTRACT_EVIDENCE$") String sourceType,
+            @NotNull Instant observedAt
+    ) {
+    }
+
+    public record IncomeDeclarationSourceRequest(
+            boolean available,
+            @Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String sourceReference,
+            @Pattern(regexp = "^INCOME_DECLARATION$") String sourceType,
+            @NotNull Instant observedAt
+    ) {
+    }
+
+    public record TelecomDelinquencySourceRequest(
+            @Min(0) int value,
+            @Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String sourceReference,
+            @Pattern(regexp = "^TELECOM_HISTORY$") String sourceType,
+            @NotNull Instant observedAt
     ) {
     }
 }

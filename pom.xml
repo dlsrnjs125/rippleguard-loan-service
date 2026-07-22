@@ -59,6 +59,11 @@
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
 		<dependency>
+			<groupId>com.networknt</groupId>
+			<artifactId>json-schema-validator</artifactId>
+			<version>1.5.9</version>
+		</dependency>
+		<dependency>
 			<groupId>org.flywaydb</groupId>
 			<artifactId>flyway-database-postgresql</artifactId>
 		</dependency>

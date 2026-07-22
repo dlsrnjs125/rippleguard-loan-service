@@ -112,4 +112,16 @@ public class FinancialSnapshotEntity {
     public UUID getSnapshotId() {
         return snapshotId;
     }
+
+    public LoanApplicationEntity getApplication() {
+        return application;
+    }
+
+    public int getVersion() {
+        return version;
+    }
+
+    public String getSnapshotVersion() {
+        return snapshotVersion;
+    }
 }

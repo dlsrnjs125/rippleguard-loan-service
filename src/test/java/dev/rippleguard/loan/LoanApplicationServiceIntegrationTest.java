@@ -4,13 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.rippleguard.loan.application.ContractSchemaValidator;
 import dev.rippleguard.loan.application.ConflictException;
 import dev.rippleguard.loan.application.EvidenceUpdateCommand;
 import dev.rippleguard.loan.application.EventEnvelope;
 import dev.rippleguard.loan.application.FinancialSnapshotInput;
 import dev.rippleguard.loan.application.InvalidStateTransitionException;
 import dev.rippleguard.loan.application.LoanApplicationService;
+import dev.rippleguard.loan.application.Phase2FeatureSnapshotService;
 import dev.rippleguard.loan.domain.LoanApplicationStatus;
+import dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotRepository;
 import dev.rippleguard.loan.infrastructure.persistence.LoanApplicationRepository;
 import dev.rippleguard.loan.infrastructure.persistence.LoanDecisionRepository;
 import dev.rippleguard.loan.infrastructure.persistence.OutboxEventRepository;
@@ -28,14 +31,44 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
+@Testcontainers
 @SpringBootTest(properties = "debug=false")
 class LoanApplicationServiceIntegrationTest {
+    @Container
+    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")
+            .withDatabaseName("rippleguard_loan")
+            .withUsername("rippleguard_loan")
+            .withPassword("rippleguard_loan");
+
+    @DynamicPropertySource
+    static void postgresProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.datasource.username", postgres::getUsername);
+        registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
+        registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
+    }
+
     @Autowired
     LoanApplicationService service;
 
     @Autowired
+    Phase2FeatureSnapshotService featureSnapshots;
+
+    @Autowired
+    ContractSchemaValidator contracts;
+
+    @Autowired
     LoanApplicationRepository applications;
+
+    @Autowired
+    LoanFeatureSnapshotRepository featureSnapshotRepository;
 
     @Autowired
     OutboxEventRepository outbox;
@@ -55,6 +88,7 @@ class LoanApplicationServiceIntegrationTest {
     @BeforeEach
     void cleanDatabase() {
         jdbc.update("delete from evidence_update_request");
+        jdbc.update("delete from loan_feature_snapshot");
         jdbc.update("delete from monthly_income");
         jdbc.update("delete from financial_snapshot");
         jdbc.update("delete from loan_decision");
@@ -70,8 +104,80 @@ class LoanApplicationServiceIntegrationTest {
         assertThat(response.status()).isEqualTo(LoanApplicationStatus.SUBMITTED);
         assertThat(response.snapshotVersion()).isEqualTo("snapshot-v1");
         assertThat(applications.findById(response.applicationId())).isPresent();
+        assertThat(featureSnapshotRepository.findByApplicationApplicationIdAndSnapshotVersion(
+                response.applicationId(), "snapshot-v1")).isPresent();
         assertThat(outbox.findAll()).hasSize(1);
         assertThat(outbox.findAll().get(0).getEventType()).isEqualTo("loan.application.submitted.v1");
+    }
+
+    @Test
+    void preservesPublicV1CreateRequestWithoutPhase2FeatureSource() {
+        LoanApplicationResponse response = service.create(validRequestWithoutPhase2("loan-create-v1-compat"));
+
+        assertThat(response.status()).isEqualTo(LoanApplicationStatus.SUBMITTED);
+        assertThat(applications.findById(response.applicationId())).isPresent();
+        assertThat(featureSnapshotRepository.count()).isZero();
+        assertThat(outbox.findAll()).hasSize(1);
+    }
+
+    @Test
+    void returnsStoredPhase2FeatureSnapshotWithoutRecomputingApplicationState() throws Exception {
+        LoanApplicationResponse created = service.create(validRequest("loan-create-feature-001", "25000000.00"));
+        var firstSnapshot = featureSnapshots.get(created.applicationId(), "snapshot-v1");
+
+        assertThat(firstSnapshot.snapshotVersion()).isEqualTo("snapshot-v1");
+        assertThat(firstSnapshot.featurePayloadDigest()).startsWith("sha256:");
+        assertThat(firstSnapshot.featurePayload())
+                .containsEntry("featurePayloadDigest", firstSnapshot.featurePayloadDigest());
+        contracts.validate(ContractSchemaValidator.FEATURE_PAYLOAD_SCHEMA, firstSnapshot.featurePayload());
+        contracts.validate(ContractSchemaValidator.SNAPSHOT_REFERENCE_SCHEMA, firstSnapshot.snapshotReference());
+        assertThat((Map<String, Object>) firstSnapshot.featurePayload().get("features"))
+                .containsKeys(
+                        "annualIncome",
+                        "monthlyIncomeMean",
+                        "monthlyIncomeVolatility",
+                        "debtToIncomeRatio",
+                        "existingDebtAmount",
+                        "delinquencyCount",
+                        "platformSettlementMonths",
+                        "platformSettlementMean",
+                        "platformSettlementVolatility",
+                        "contractDurationMonths",
+                        "incomeDeclarationAvailable",
+                        "telecomPaymentDelinquencyCount");
+
+        service.handleGovernanceReviewStarted(reviewStarted(created.applicationId()));
+        EventEnvelope evidenceRequested = event(
+                "governance.evidence.requested.v1",
+                "governance-service",
+                created.applicationId(),
+                UUID.fromString("30000000-0000-4000-8000-000000000016"),
+                UUID.randomUUID(),
+                Map.of(
+                        "requestId", "20000000-0000-4000-8000-000000000016",
+                        "decisionCaseId", "case-1001",
+                        "applicationId", created.applicationId().toString(),
+                        "evaluationRunId", "30000000-0000-4000-8000-000000000016",
+                        "requestedEvidenceTypes", List.of("TRANSACTION_EXPLANATION"),
+                        "reasonCodes", List.of("UNCONFIRMED_TRANSACTION_ANOMALY")
+                )
+        );
+        service.handleEvidenceRequested(evidenceRequested);
+        service.updateEvidence(
+                new EvidenceUpdateCommand(
+                        created.applicationId(),
+                        "case-1001",
+                        evidenceRequested.eventId(),
+                        List.of("evidence://transaction-explanation/1")
+                ),
+                FinancialSnapshotInput.fromCreateRequest(
+                        validRequest("loan-evidence-feature-001", "30000000.00", "6100000.00"))
+        );
+
+        var storedFirstSnapshot = featureSnapshots.get(created.applicationId(), "snapshot-v1");
+        var secondSnapshot = featureSnapshots.get(created.applicationId(), "snapshot-v2");
+        assertThat(storedFirstSnapshot.featurePayloadDigest()).isEqualTo(firstSnapshot.featurePayloadDigest());
+        assertThat(secondSnapshot.featurePayloadDigest()).isNotEqualTo(firstSnapshot.featurePayloadDigest());
     }
 
     @Test
@@ -90,6 +196,17 @@ class LoanApplicationServiceIntegrationTest {
 
         assertThatThrownBy(() -> service.create(validRequest("loan-create-003", "30000000.00")))
                 .isInstanceOf(ConflictException.class);
+    }
+
+    @Test
+    void rejectsFeatureSourceOutsideOfficialContractAndRollsBackSubmission() {
+        assertThatThrownBy(() -> service.create(requestWithContractDuration("loan-create-feature-range", 241)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Contract validation failed");
+
+        assertThat(applications.count()).isZero();
+        assertThat(featureSnapshotRepository.count()).isZero();
+        assertThat(outbox.count()).isZero();
     }
 
     @Test
@@ -296,17 +413,69 @@ class LoanApplicationServiceIntegrationTest {
     }
 
     private LoanApplicationCreateRequest validRequest(String idempotencyKey, String requestedAmount) {
+        return validRequest(idempotencyKey, requestedAmount, "5200000.00");
+    }
+
+    private LoanApplicationCreateRequest validRequest(String idempotencyKey, String requestedAmount,
+                                                      String monthlyIncomeAmount) {
         return new LoanApplicationCreateRequest(
                 "1.0.0",
                 "synthetic:applicant-001",
                 requestedAmount,
                 "KRW",
+                List.of(new LoanApplicationCreateRequest.MonthlyIncomeRequest("2026-06", monthlyIncomeAmount, "masked:income-2026-06")),
+                new LoanApplicationCreateRequest.DebtSummaryRequest("4000000.00", "350000.00", List.of("masked:debt-summary-001")),
+                new LoanApplicationCreateRequest.DelinquencySummaryRequest(0, 0, List.of("masked:delinquency-001")),
+                new LoanApplicationCreateRequest.PlatformSettlementSummaryRequest("2026-Q2", "18000000.00", List.of("synthetic:settlement-q2")),
+                phase2FeatureSource(36),
+                List.of("synthetic:risk-signal-001"),
+                idempotencyKey
+        );
+    }
+
+    private LoanApplicationCreateRequest requestWithContractDuration(String idempotencyKey, int contractDurationMonths) {
+        return new LoanApplicationCreateRequest(
+                "1.0.0",
+                "synthetic:applicant-001",
+                "25000000.00",
+                "KRW",
                 List.of(new LoanApplicationCreateRequest.MonthlyIncomeRequest("2026-06", "5200000.00", "masked:income-2026-06")),
                 new LoanApplicationCreateRequest.DebtSummaryRequest("4000000.00", "350000.00", List.of("masked:debt-summary-001")),
                 new LoanApplicationCreateRequest.DelinquencySummaryRequest(0, 0, List.of("masked:delinquency-001")),
                 new LoanApplicationCreateRequest.PlatformSettlementSummaryRequest("2026-Q2", "18000000.00", List.of("synthetic:settlement-q2")),
+                phase2FeatureSource(contractDurationMonths),
                 List.of("synthetic:risk-signal-001"),
                 idempotencyKey
+        );
+    }
+
+    private LoanApplicationCreateRequest validRequestWithoutPhase2(String idempotencyKey) {
+        return new LoanApplicationCreateRequest(
+                "1.0.0",
+                "synthetic:applicant-001",
+                "25000000.00",
+                "KRW",
+                List.of(new LoanApplicationCreateRequest.MonthlyIncomeRequest("2026-06", "5200000.00", "masked:income-2026-06")),
+                new LoanApplicationCreateRequest.DebtSummaryRequest("4000000.00", "350000.00", List.of("masked:debt-summary-001")),
+                new LoanApplicationCreateRequest.DelinquencySummaryRequest(0, 0, List.of("masked:delinquency-001")),
+                new LoanApplicationCreateRequest.PlatformSettlementSummaryRequest("2026-Q2", "18000000.00", List.of("synthetic:settlement-q2")),
+                null,
+                List.of("synthetic:risk-signal-001"),
+                idempotencyKey
+        );
+    }
+
+    private LoanApplicationCreateRequest.Phase2FeatureSourceRequest phase2FeatureSource(int contractDurationMonths) {
+        Instant observedAt = Instant.parse("2026-07-21T10:00:00Z");
+        return new LoanApplicationCreateRequest.Phase2FeatureSourceRequest(
+                new LoanApplicationCreateRequest.SettlementVolatilitySourceRequest(
+                        "0.081", "masked:settlement-history-001", "SETTLEMENT_HISTORY", observedAt),
+                new LoanApplicationCreateRequest.ContractDurationSourceRequest(
+                        contractDurationMonths, "masked:contract-001", "CONTRACT_EVIDENCE", observedAt),
+                new LoanApplicationCreateRequest.IncomeDeclarationSourceRequest(
+                        true, "masked:income-declaration-001", "INCOME_DECLARATION", observedAt),
+                new LoanApplicationCreateRequest.TelecomDelinquencySourceRequest(
+                        0, "masked:telecom-history-001", "TELECOM_HISTORY", observedAt)
         );
     }
 

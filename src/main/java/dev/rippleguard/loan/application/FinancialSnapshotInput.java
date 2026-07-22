@@ -1,6 +1,7 @@
 package dev.rippleguard.loan.application;
 
 import dev.rippleguard.loan.interfaces.rest.LoanApplicationCreateRequest;
+import java.time.Instant;
 import java.util.List;
 
 public record FinancialSnapshotInput(
@@ -11,6 +12,7 @@ public record FinancialSnapshotInput(
         DebtSummaryInput debtSummary,
         DelinquencySummaryInput delinquencySummary,
         PlatformSettlementSummaryInput platformSettlementSummary,
+        Phase2FeatureSourceInput phase2FeatureSource,
         List<String> riskSignalReferences
 ) {
     public static FinancialSnapshotInput fromCreateRequest(LoanApplicationCreateRequest request) {
@@ -36,7 +38,41 @@ public record FinancialSnapshotInput(
                         request.platformSettlementSummary().grossSettlementAmount(),
                         request.platformSettlementSummary().sourceReferences()
                 ),
+                phase2FeatureSource(request.phase2FeatureSource()),
                 request.riskSignalReferences()
+        );
+    }
+
+    private static Phase2FeatureSourceInput phase2FeatureSource(
+            LoanApplicationCreateRequest.Phase2FeatureSourceRequest request) {
+        if (request == null) {
+            return null;
+        }
+        return new Phase2FeatureSourceInput(
+                new DecimalFeatureSourceInput(
+                        request.platformSettlementVolatility().value(),
+                        request.platformSettlementVolatility().sourceReference(),
+                        request.platformSettlementVolatility().sourceType(),
+                        request.platformSettlementVolatility().observedAt()
+                ),
+                new IntegerFeatureSourceInput(
+                        request.contractDuration().value(),
+                        request.contractDuration().sourceReference(),
+                        request.contractDuration().sourceType(),
+                        request.contractDuration().observedAt()
+                ),
+                new BooleanFeatureSourceInput(
+                        request.incomeDeclaration().available(),
+                        request.incomeDeclaration().sourceReference(),
+                        request.incomeDeclaration().sourceType(),
+                        request.incomeDeclaration().observedAt()
+                ),
+                new IntegerFeatureSourceInput(
+                        request.telecomDelinquency().value(),
+                        request.telecomDelinquency().sourceReference(),
+                        request.telecomDelinquency().sourceType(),
+                        request.telecomDelinquency().observedAt()
+                )
         );
     }
 
@@ -50,5 +86,20 @@ public record FinancialSnapshotInput(
     }
 
     public record PlatformSettlementSummaryInput(String period, String grossSettlementAmount, List<String> sourceReferences) {
+    }
+
+    public record Phase2FeatureSourceInput(DecimalFeatureSourceInput platformSettlementVolatility,
+                                           IntegerFeatureSourceInput contractDuration,
+                                           BooleanFeatureSourceInput incomeDeclaration,
+                                           IntegerFeatureSourceInput telecomDelinquency) {
+    }
+
+    public record DecimalFeatureSourceInput(String value, String sourceReference, String sourceType, Instant observedAt) {
+    }
+
+    public record IntegerFeatureSourceInput(int value, String sourceReference, String sourceType, Instant observedAt) {
+    }
+
+    public record BooleanFeatureSourceInput(boolean available, String sourceReference, String sourceType, Instant observedAt) {
     }
 }

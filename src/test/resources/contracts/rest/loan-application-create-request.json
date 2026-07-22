@@ -7,6 +7,32 @@
   "debtSummary": { "totalOutstandingAmount": "4000000.00", "monthlyPaymentAmount": "350000.00", "sourceReferences": ["masked:debt-summary-001"] },
   "delinquencySummary": { "delinquencyCount": 0, "daysPastDueMaximum": 0, "sourceReferences": ["masked:delinquency-001"] },
   "platformSettlementSummary": { "period": "2026-Q2", "grossSettlementAmount": "18000000.00", "sourceReferences": ["synthetic:settlement-q2"] },
+  "phase2FeatureSource": {
+    "platformSettlementVolatility": {
+      "value": "0.081",
+      "sourceReference": "masked:settlement-history-001",
+      "sourceType": "SETTLEMENT_HISTORY",
+      "observedAt": "2026-07-21T10:00:00Z"
+    },
+    "contractDuration": {
+      "value": 36,
+      "sourceReference": "masked:contract-001",
+      "sourceType": "CONTRACT_EVIDENCE",
+      "observedAt": "2026-07-21T10:00:00Z"
+    },
+    "incomeDeclaration": {
+      "available": true,
+      "sourceReference": "masked:income-declaration-001",
+      "sourceType": "INCOME_DECLARATION",
+      "observedAt": "2026-07-21T10:00:00Z"
+    },
+    "telecomDelinquency": {
+      "value": 0,
+      "sourceReference": "masked:telecom-history-001",
+      "sourceType": "TELECOM_HISTORY",
+      "observedAt": "2026-07-21T10:00:00Z"
+    }
+  },
   "riskSignalReferences": ["synthetic:risk-signal-001"],
   "idempotencyKey": "loan-create-001"
 }

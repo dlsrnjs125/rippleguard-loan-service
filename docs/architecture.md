@@ -5,7 +5,7 @@ RippleGuard Loan Service owns the loan application aggregate and applies Governa
 ## Components
 
 - REST adapter: accepts `POST /api/v1/loan-applications` and `GET /api/v1/loan-applications/{applicationId}`.
-- Application service: enforces idempotency, state transitions, command validation, and transaction boundaries.
+- Application service: enforces idempotency, state transitions, command validation, feature snapshot materialization, and transaction boundaries.
 - Persistence adapter: JPA repositories backed by PostgreSQL and Flyway migrations.
 - Kafka consumer: consumes Governance review, evidence, and decision command events.
 - Transactional outbox: stores outbound events in the same transaction as state changes. Kafka publishing is retried asynchronously.
@@ -13,7 +13,9 @@ RippleGuard Loan Service owns the loan application aggregate and applies Governa
 
 ## Transaction boundaries
 
-Application creation persists `loan_application`, `financial_snapshot`, `monthly_income`, and a `loan.application.submitted.v1` outbox row in one transaction.
+Application creation persists `loan_application`, `financial_snapshot`, `monthly_income`, `loan_feature_snapshot`, and a `loan.application.submitted.v1` outbox row in one transaction.
+
+Evidence update persists the replacement `financial_snapshot`, `monthly_income`, matching `loan_feature_snapshot`, the evidence idempotency marker, and the `loan.evidence.updated.v1` outbox row in one transaction.
 
 Decision command processing validates the command envelope, transitions state, persists `loan_decision`, records the inbox row, and writes `loan.decision.finalized.v1` outbox in one transaction.
 

@@ -6,9 +6,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import javax.sql.DataSource;
 import dev.rippleguard.loan.application.ConflictException;
 import dev.rippleguard.loan.application.EventEnvelope;
+import dev.rippleguard.loan.application.FinancialSnapshotInput;
 import dev.rippleguard.loan.application.LoanApplicationService;
+import dev.rippleguard.loan.application.Phase2FeatureSnapshotService;
 import dev.rippleguard.loan.domain.LoanApplicationStatus;
 import dev.rippleguard.loan.domain.OutboxStatus;
+import dev.rippleguard.loan.infrastructure.persistence.FinancialSnapshotEntity;
+import dev.rippleguard.loan.infrastructure.persistence.FinancialSnapshotRepository;
+import dev.rippleguard.loan.infrastructure.persistence.LoanApplicationEntity;
+import dev.rippleguard.loan.infrastructure.persistence.LoanApplicationRepository;
+import dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotRepository;
 import dev.rippleguard.loan.infrastructure.persistence.OutboxEventEntity;
 import dev.rippleguard.loan.infrastructure.persistence.OutboxEventRepository;
 import dev.rippleguard.loan.interfaces.rest.LoanApplicationCreateRequest;
@@ -63,6 +70,18 @@ class PostgresMigrationIntegrationTest {
     OutboxEventRepository outbox;
 
     @Autowired
+    LoanFeatureSnapshotRepository featureSnapshots;
+
+    @Autowired
+    Phase2FeatureSnapshotService featureSnapshotService;
+
+    @Autowired
+    LoanApplicationRepository applications;
+
+    @Autowired
+    FinancialSnapshotRepository financialSnapshots;
+
+    @Autowired
     LoanApplicationService service;
 
     @Autowired
@@ -77,6 +96,7 @@ class PostgresMigrationIntegrationTest {
     @BeforeEach
     void cleanDatabase() {
         jdbc.update("delete from evidence_update_request");
+        jdbc.update("delete from loan_feature_snapshot");
         jdbc.update("delete from monthly_income");
         jdbc.update("delete from financial_snapshot");
         jdbc.update("delete from loan_decision");
@@ -156,6 +176,10 @@ class PostgresMigrationIntegrationTest {
                 .map(LoanApplicationResponse.class::cast)
                 .map(LoanApplicationResponse::applicationId)
                 .distinct()).hasSize(1);
+        LoanApplicationResponse response = (LoanApplicationResponse) results.get(0);
+        assertThat(featureSnapshots.findByApplicationApplicationIdAndSnapshotVersion(
+                response.applicationId(), "snapshot-v1")).isPresent();
+        assertThat(featureSnapshots.count()).isEqualTo(1);
     }
 
     @Test
@@ -167,6 +191,75 @@ class PostgresMigrationIntegrationTest {
 
         assertThat(results).filteredOn(LoanApplicationResponse.class::isInstance).hasSize(1);
         assertThat(results).filteredOn(ConflictException.class::isInstance).hasSize(1);
+    }
+
+    @Test
+    void concurrentDirectFeatureSnapshotCreateRecoversIdempotentlyOutsideFailedTransaction() throws Exception {
+        SnapshotFixture fixture = snapshotFixture("postgres-direct-feature-same");
+        FinancialSnapshotInput input = FinancialSnapshotInput.fromCreateRequest(
+                validRequest("postgres-direct-feature-input", "25000000.00"));
+
+        var results = runConcurrently(
+                () -> featureSnapshotService.createIfSourcePresent(
+                        fixture.application(), fixture.financialSnapshot(), input, Instant.now()).orElseThrow(),
+                () -> featureSnapshotService.createIfSourcePresent(
+                        fixture.application(), fixture.financialSnapshot(), input, Instant.now()).orElseThrow()
+        );
+
+        assertThat(results).allMatch(result -> result instanceof dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotEntity);
+        assertThat(featureSnapshots.count()).isEqualTo(1);
+        assertThat(results.stream()
+                .map(dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotEntity.class::cast)
+                .map(dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotEntity::getFeaturePayloadDigest)
+                .distinct()).hasSize(1);
+    }
+
+    @Test
+    void directFeatureSnapshotCreateRejectsSameVersionDifferentPayloadWithoutOverwriting() {
+        SnapshotFixture fixture = snapshotFixture("postgres-direct-feature-conflict");
+        FinancialSnapshotInput first = FinancialSnapshotInput.fromCreateRequest(
+                validRequest("postgres-direct-feature-first", "25000000.00"));
+        FinancialSnapshotInput second = FinancialSnapshotInput.fromCreateRequest(
+                validRequest("postgres-direct-feature-second", "25000000.00", "6100000.00"));
+
+        var created = featureSnapshotService.createIfSourcePresent(
+                fixture.application(), fixture.financialSnapshot(), first, Instant.now()).orElseThrow();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> featureSnapshotService.createIfSourcePresent(
+                        fixture.application(), fixture.financialSnapshot(), second, Instant.now()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("FEATURE_SNAPSHOT_CONFLICT");
+        assertThat(featureSnapshots.count()).isEqualTo(1);
+        assertThat(featureSnapshots.findByApplicationApplicationIdAndSnapshotVersion(
+                fixture.application().getApplicationId(), "snapshot-v1")).get()
+                .extracting(dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotEntity::getFeaturePayloadDigest)
+                .isEqualTo(created.getFeaturePayloadDigest());
+    }
+
+    @Test
+    void featureSnapshotRejectsReusingFinancialSnapshotForAnotherVersion() {
+        SnapshotFixture fixture = snapshotFixture("postgres-financial-snapshot-unique");
+        FinancialSnapshotInput input = FinancialSnapshotInput.fromCreateRequest(
+                validRequest("postgres-financial-snapshot-unique-input", "25000000.00"));
+        var created = featureSnapshotService.createIfSourcePresent(
+                fixture.application(), fixture.financialSnapshot(), input, Instant.now()).orElseThrow();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> transactions.execute(status ->
+                featureSnapshots.insertIfAbsent(
+                        UUID.randomUUID(),
+                        fixture.application().getApplicationId(),
+                        fixture.financialSnapshot().getSnapshotId(),
+                        "snapshot-v2",
+                        created.getSnapshotSchemaVersion(),
+                        created.getFeatureSchemaVersion(),
+                        created.getFeaturePayload(),
+                        created.getFeaturePayloadDigest(),
+                        created.getSnapshotReference(),
+                        fixture.application().getSnapshotVersion(),
+                        Instant.now()
+                )))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        assertThat(featureSnapshots.count()).isEqualTo(1);
     }
 
     @Test
@@ -221,17 +314,62 @@ class PostgresMigrationIntegrationTest {
     }
 
     private LoanApplicationCreateRequest validRequest(String idempotencyKey, String requestedAmount) {
+        return validRequest(idempotencyKey, requestedAmount, "5200000.00");
+    }
+
+    private LoanApplicationCreateRequest validRequest(String idempotencyKey, String requestedAmount,
+                                                      String monthlyIncomeAmount) {
         return new LoanApplicationCreateRequest(
                 "1.0.0",
                 "synthetic:applicant-001",
                 requestedAmount,
                 "KRW",
+                List.of(new LoanApplicationCreateRequest.MonthlyIncomeRequest("2026-06", monthlyIncomeAmount, "masked:income-2026-06")),
+                new LoanApplicationCreateRequest.DebtSummaryRequest("4000000.00", "350000.00", List.of("masked:debt-summary-001")),
+                new LoanApplicationCreateRequest.DelinquencySummaryRequest(0, 0, List.of("masked:delinquency-001")),
+                new LoanApplicationCreateRequest.PlatformSettlementSummaryRequest("2026-Q2", "18000000.00", List.of("synthetic:settlement-q2")),
+                phase2FeatureSource(),
+                List.of("synthetic:risk-signal-001"),
+                idempotencyKey
+        );
+    }
+
+    private SnapshotFixture snapshotFixture(String idempotencyKey) {
+        LoanApplicationResponse response = service.create(validRequestWithoutPhase2(idempotencyKey));
+        LoanApplicationEntity application = applications.findById(response.applicationId()).orElseThrow();
+        FinancialSnapshotEntity financialSnapshot = financialSnapshots
+                .findByApplicationApplicationIdAndSnapshotVersion(response.applicationId(), "snapshot-v1")
+                .orElseThrow();
+        return new SnapshotFixture(application, financialSnapshot);
+    }
+
+    private LoanApplicationCreateRequest validRequestWithoutPhase2(String idempotencyKey) {
+        return new LoanApplicationCreateRequest(
+                "1.0.0",
+                "synthetic:applicant-001",
+                "25000000.00",
+                "KRW",
                 List.of(new LoanApplicationCreateRequest.MonthlyIncomeRequest("2026-06", "5200000.00", "masked:income-2026-06")),
                 new LoanApplicationCreateRequest.DebtSummaryRequest("4000000.00", "350000.00", List.of("masked:debt-summary-001")),
                 new LoanApplicationCreateRequest.DelinquencySummaryRequest(0, 0, List.of("masked:delinquency-001")),
                 new LoanApplicationCreateRequest.PlatformSettlementSummaryRequest("2026-Q2", "18000000.00", List.of("synthetic:settlement-q2")),
+                null,
                 List.of("synthetic:risk-signal-001"),
                 idempotencyKey
+        );
+    }
+
+    private LoanApplicationCreateRequest.Phase2FeatureSourceRequest phase2FeatureSource() {
+        Instant observedAt = Instant.parse("2026-07-21T10:00:00Z");
+        return new LoanApplicationCreateRequest.Phase2FeatureSourceRequest(
+                new LoanApplicationCreateRequest.SettlementVolatilitySourceRequest(
+                        "0.081", "masked:settlement-history-001", "SETTLEMENT_HISTORY", observedAt),
+                new LoanApplicationCreateRequest.ContractDurationSourceRequest(
+                        36, "masked:contract-001", "CONTRACT_EVIDENCE", observedAt),
+                new LoanApplicationCreateRequest.IncomeDeclarationSourceRequest(
+                        true, "masked:income-declaration-001", "INCOME_DECLARATION", observedAt),
+                new LoanApplicationCreateRequest.TelecomDelinquencySourceRequest(
+                        0, "masked:telecom-history-001", "TELECOM_HISTORY", observedAt)
         );
     }
 
@@ -312,5 +450,8 @@ class PostgresMigrationIntegrationTest {
     @FunctionalInterface
     private interface ThrowingSupplier<T> {
         T get() throws Exception;
+    }
+
+    private record SnapshotFixture(LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot) {
     }
 }

@@ -6,8 +6,9 @@
 2. Loan Service hashes the canonical request body and checks `idempotencyKey`.
 3. Loan Service stores `LoanApplication` as `SUBMITTED`.
 4. Loan Service stores `FinancialSnapshot` version `snapshot-v1`.
-5. Loan Service writes `loan.application.submitted.v1` to `outbox_event`.
-6. Outbox publisher sends the event to Kafka and marks it `PUBLISHED`.
+5. Loan Service materializes `loan_feature_snapshot` version `snapshot-v1` from the same input.
+6. Loan Service writes `loan.application.submitted.v1` to `outbox_event`.
+7. Outbox publisher sends the event to Kafka and marks it `PUBLISHED`.
 
 ## Governance review
 
@@ -15,13 +16,16 @@
 
 `governance.evidence.requested.v1` moves the application to `EVIDENCE_REQUIRED`.
 
-An internal evidence update adapter stores a new `FinancialSnapshot`, increments `snapshotVersion`, emits `loan.evidence.updated.v1`, and moves the application back to `UNDER_GOVERNANCE_REVIEW`.
+An internal evidence update adapter stores a new `FinancialSnapshot`, materializes the matching Phase 2 feature snapshot, increments `snapshotVersion`, emits `loan.evidence.updated.v1`, and moves the application back to `UNDER_GOVERNANCE_REVIEW`.
 
 The adapter is intentionally internal-only:
 
 - `POST /internal/api/v1/loan-applications/{applicationId}/evidence`
+- `GET /internal/api/v1/loan-applications/{applicationId}/phase2-feature-snapshots/{snapshotVersion}`
 - no public Phase 1 REST contract endpoint is added
 - public evidence input contract should be finalized with Governance/Web integration
+
+Feature snapshot reads are storage reads. Missing snapshots return not found; the internal API does not synthesize a snapshot from current application data or choose a latest version.
 
 ## Decision command
 
