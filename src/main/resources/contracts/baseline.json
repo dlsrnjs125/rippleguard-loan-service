@@ -1,0 +1,15 @@
+{
+  "repository": "dlsrnjs125/rippleguard-contracts",
+  "sourceCommit": "751f43c88c1bef860c76398eed24b3d60225b931",
+  "schemas": [
+    {
+      "sourcePath": "schemas/domain/feature-payload.v1.0.0.schema.json",
+      "bundledPath": "contracts/schemas/domain/feature-payload.v1.0.0.schema.json"
+    },
+    {
+      "sourcePath": "schemas/domain/snapshot-reference.v1.0.0.schema.json",
+      "bundledPath": "contracts/schemas/domain/snapshot-reference.v1.0.0.schema.json"
+    }
+  ],
+  "verificationCommand": "git -C ../rippleguard-contracts rev-parse HEAD"
+}

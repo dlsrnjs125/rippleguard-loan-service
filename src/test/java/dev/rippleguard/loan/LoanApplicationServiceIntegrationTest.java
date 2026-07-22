@@ -90,6 +90,16 @@ class LoanApplicationServiceIntegrationTest {
     }
 
     @Test
+    void preservesPublicV1CreateRequestWithoutPhase2FeatureSource() {
+        LoanApplicationResponse response = service.create(validRequestWithoutPhase2("loan-create-v1-compat"));
+
+        assertThat(response.status()).isEqualTo(LoanApplicationStatus.SUBMITTED);
+        assertThat(applications.findById(response.applicationId())).isPresent();
+        assertThat(featureSnapshotRepository.count()).isZero();
+        assertThat(outbox.findAll()).hasSize(1);
+    }
+
+    @Test
     void returnsStoredPhase2FeatureSnapshotWithoutRecomputingApplicationState() throws Exception {
         LoanApplicationResponse created = service.create(validRequest("loan-create-feature-001", "25000000.00"));
         var firstSnapshot = featureSnapshots.get(created.applicationId(), "snapshot-v1");
@@ -413,6 +423,22 @@ class LoanApplicationServiceIntegrationTest {
                 new LoanApplicationCreateRequest.DelinquencySummaryRequest(0, 0, List.of("masked:delinquency-001")),
                 new LoanApplicationCreateRequest.PlatformSettlementSummaryRequest("2026-Q2", "18000000.00", List.of("synthetic:settlement-q2")),
                 phase2FeatureSource(contractDurationMonths),
+                List.of("synthetic:risk-signal-001"),
+                idempotencyKey
+        );
+    }
+
+    private LoanApplicationCreateRequest validRequestWithoutPhase2(String idempotencyKey) {
+        return new LoanApplicationCreateRequest(
+                "1.0.0",
+                "synthetic:applicant-001",
+                "25000000.00",
+                "KRW",
+                List.of(new LoanApplicationCreateRequest.MonthlyIncomeRequest("2026-06", "5200000.00", "masked:income-2026-06")),
+                new LoanApplicationCreateRequest.DebtSummaryRequest("4000000.00", "350000.00", List.of("masked:debt-summary-001")),
+                new LoanApplicationCreateRequest.DelinquencySummaryRequest(0, 0, List.of("masked:delinquency-001")),
+                new LoanApplicationCreateRequest.PlatformSettlementSummaryRequest("2026-Q2", "18000000.00", List.of("synthetic:settlement-q2")),
+                null,
                 List.of("synthetic:risk-signal-001"),
                 idempotencyKey
         );

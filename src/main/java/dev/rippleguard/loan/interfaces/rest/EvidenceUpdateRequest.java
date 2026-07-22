@@ -68,7 +68,7 @@ public record EvidenceUpdateRequest(
     public record SettlementVolatilitySourceRequest(
             @Pattern(regexp = "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$") String value,
             @Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String sourceReference,
-            @NotBlank String sourceType,
+            @Pattern(regexp = "^SETTLEMENT_HISTORY$") String sourceType,
             @NotNull Instant observedAt
     ) {
     }
@@ -76,7 +76,7 @@ public record EvidenceUpdateRequest(
     public record ContractDurationSourceRequest(
             @Min(1) int value,
             @Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String sourceReference,
-            @NotBlank String sourceType,
+            @Pattern(regexp = "^CONTRACT_EVIDENCE$") String sourceType,
             @NotNull Instant observedAt
     ) {
     }
@@ -84,7 +84,7 @@ public record EvidenceUpdateRequest(
     public record IncomeDeclarationSourceRequest(
             boolean available,
             @Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String sourceReference,
-            @NotBlank String sourceType,
+            @Pattern(regexp = "^INCOME_DECLARATION$") String sourceType,
             @NotNull Instant observedAt
     ) {
     }
@@ -92,7 +92,7 @@ public record EvidenceUpdateRequest(
     public record TelecomDelinquencySourceRequest(
             @Min(0) int value,
             @Pattern(regexp = "^(synthetic|masked):[A-Za-z0-9._-]+$") String sourceReference,
-            @NotBlank String sourceType,
+            @Pattern(regexp = "^TELECOM_HISTORY$") String sourceType,
             @NotNull Instant observedAt
     ) {
     }

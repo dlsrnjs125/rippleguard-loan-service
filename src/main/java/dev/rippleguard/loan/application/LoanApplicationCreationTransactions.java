@@ -112,7 +112,7 @@ public class LoanApplicationCreationTransactions {
                 money(income.amount()),
                 income.sourceReference()
         )));
-        featureSnapshots.create(application, snapshot, input, now);
+        featureSnapshots.createIfSourcePresent(application, snapshot, input, now);
     }
 
     private OutboxEventEntity submittedEvent(UUID applicationId, LoanApplicationCreateRequest request, Instant now) {

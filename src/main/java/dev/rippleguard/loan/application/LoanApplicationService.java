@@ -244,7 +244,7 @@ public class LoanApplicationService {
                 money(income.amount()),
                 income.sourceReference()
         )));
-        featureSnapshots.create(application, snapshot, input, now);
+        featureSnapshots.createIfSourcePresent(application, snapshot, input, now);
         return snapshot;
     }
 

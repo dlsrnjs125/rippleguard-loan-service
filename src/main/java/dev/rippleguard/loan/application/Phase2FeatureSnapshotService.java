@@ -11,12 +11,16 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class Phase2FeatureSnapshotService {
@@ -31,18 +35,80 @@ public class Phase2FeatureSnapshotService {
     private final LoanFeatureSnapshotRepository snapshots;
     private final ContractSchemaValidator contracts;
     private final JsonSupport json;
+    private final TransactionTemplate transactions;
 
     public Phase2FeatureSnapshotService(LoanFeatureSnapshotRepository snapshots,
                                         ContractSchemaValidator contracts,
-                                        JsonSupport json) {
+                                        JsonSupport json,
+                                        PlatformTransactionManager transactionManager) {
         this.snapshots = snapshots;
         this.contracts = contracts;
         this.json = json;
+        this.transactions = new TransactionTemplate(transactionManager);
+        this.transactions.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     @Transactional
-    public LoanFeatureSnapshotEntity create(LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
-                                            FinancialSnapshotInput input, Instant now) {
+    public Optional<LoanFeatureSnapshotEntity> createIfSourcePresent(
+            LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
+            FinancialSnapshotInput input, Instant now) {
+        if (input.phase2FeatureSource() == null) {
+            return Optional.empty();
+        }
+        return Optional.of(insertOrReturnExisting(application, financialSnapshot, input, now));
+    }
+
+    public LoanFeatureSnapshotEntity createIdempotently(
+            LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
+            FinancialSnapshotInput input, Instant now) {
+        if (input.phase2FeatureSource() == null) {
+            throw new IllegalArgumentException("Phase 2 feature source is required");
+        }
+        PreparedSnapshot prepared = prepare(application, financialSnapshot, input, now);
+        try {
+            return transactions.execute(status -> insertPrepared(application, financialSnapshot, prepared));
+        } catch (DataIntegrityViolationException conflict) {
+            return transactions.execute(status ->
+                    snapshots.findByApplicationApplicationIdAndSnapshotVersion(
+                                    application.getApplicationId(), financialSnapshot.getSnapshotVersion())
+                            .map(existing -> requireSameDigest(existing, prepared.featurePayloadDigest()))
+                            .orElseThrow(() -> conflict));
+        }
+    }
+
+    private LoanFeatureSnapshotEntity insertOrReturnExisting(
+            LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
+            FinancialSnapshotInput input, Instant now) {
+        PreparedSnapshot prepared = prepare(application, financialSnapshot, input, now);
+        return insertPrepared(application, financialSnapshot, prepared);
+    }
+
+    private LoanFeatureSnapshotEntity insertPrepared(
+            LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
+            PreparedSnapshot prepared) {
+        var existing = snapshots.findByApplicationApplicationIdAndSnapshotVersion(
+                application.getApplicationId(), prepared.snapshotVersion());
+        if (existing.isPresent()) {
+            return requireSameDigest(existing.get(), prepared.featurePayloadDigest());
+        }
+
+        return snapshots.saveAndFlush(new LoanFeatureSnapshotEntity(
+                prepared.snapshotId(),
+                application,
+                financialSnapshot,
+                prepared.snapshotVersion(),
+                SNAPSHOT_SCHEMA_VERSION,
+                FEATURE_SCHEMA_VERSION,
+                prepared.featurePayloadJson(),
+                prepared.featurePayloadDigest(),
+                prepared.snapshotReferenceJson(),
+                application.getSnapshotVersion(),
+                prepared.createdAt()
+        ));
+    }
+
+    private PreparedSnapshot prepare(LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
+                                     FinancialSnapshotInput input, Instant now) {
         String snapshotVersion = financialSnapshot.getSnapshotVersion();
         Map<String, Object> featurePayloadWithoutDigest = featurePayloadWithoutDigest(input);
         String featurePayloadDigest = "sha256:" + json.sha256(json.canonicalJson(featurePayloadWithoutDigest));
@@ -64,32 +130,14 @@ public class Phase2FeatureSnapshotService {
         snapshotReference.put("referenceType", "MATERIALIZED_FEATURES");
         contracts.validate(ContractSchemaValidator.SNAPSHOT_REFERENCE_SCHEMA, snapshotReference);
 
-        var existing = snapshots.findByApplicationApplicationIdAndSnapshotVersion(
-                application.getApplicationId(), snapshotVersion);
-        if (existing.isPresent()) {
-            return requireSameDigest(existing.get(), featurePayloadDigest);
-        }
-
-        try {
-            return snapshots.saveAndFlush(new LoanFeatureSnapshotEntity(
+        return new PreparedSnapshot(
                 snapshotId,
-                application,
-                financialSnapshot,
                 snapshotVersion,
-                SNAPSHOT_SCHEMA_VERSION,
-                FEATURE_SCHEMA_VERSION,
                 json.canonicalJson(featurePayload),
                 featurePayloadDigest,
                 json.canonicalJson(snapshotReference),
-                application.getSnapshotVersion(),
                 now
-            ));
-        } catch (DataIntegrityViolationException exception) {
-            return snapshots.findByApplicationApplicationIdAndSnapshotVersion(
-                            application.getApplicationId(), snapshotVersion)
-                    .map(existingSnapshot -> requireSameDigest(existingSnapshot, featurePayloadDigest))
-                    .orElseThrow(() -> exception);
-        }
+        );
     }
 
     @Transactional(readOnly = true)
@@ -222,5 +270,9 @@ public class Phase2FeatureSnapshotService {
     private BigDecimal number(BigDecimal value) {
         return value.setScale(FEATURE_SCALE, RoundingMode.HALF_UP)
                 .stripTrailingZeros();
+    }
+
+    private record PreparedSnapshot(UUID snapshotId, String snapshotVersion, String featurePayloadJson,
+                                    String featurePayloadDigest, String snapshotReferenceJson, Instant createdAt) {
     }
 }

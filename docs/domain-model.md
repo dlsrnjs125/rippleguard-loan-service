@@ -62,3 +62,7 @@ Feature source mapping:
 Required Phase 2 feature sources must be supplied explicitly. The service does not fill unsupported features with zero, means, or fallback application state.
 
 Generated feature payloads and snapshot references are validated against pinned copies of the official RippleGuard Contracts JSON Schemas before persistence. Contract validation failure rolls back the snapshot and outbox transaction.
+
+The pinned contract baseline is recorded in `src/main/resources/contracts/baseline.json`.
+
+Existing public `loan-application-create-request.v1.0.0` clients are not required to send Phase 2 feature source evidence. When `phase2FeatureSource` is absent, Loan Service stores the Phase 1 financial snapshot and submitted event without synthesizing a Phase 2 feature snapshot. Phase 2 materialization requires explicit source evidence.

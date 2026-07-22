@@ -38,33 +38,41 @@ public record FinancialSnapshotInput(
                         request.platformSettlementSummary().grossSettlementAmount(),
                         request.platformSettlementSummary().sourceReferences()
                 ),
-                new Phase2FeatureSourceInput(
-                        new DecimalFeatureSourceInput(
-                                request.phase2FeatureSource().platformSettlementVolatility().value(),
-                                request.phase2FeatureSource().platformSettlementVolatility().sourceReference(),
-                                request.phase2FeatureSource().platformSettlementVolatility().sourceType(),
-                                request.phase2FeatureSource().platformSettlementVolatility().observedAt()
-                        ),
-                        new IntegerFeatureSourceInput(
-                                request.phase2FeatureSource().contractDuration().value(),
-                                request.phase2FeatureSource().contractDuration().sourceReference(),
-                                request.phase2FeatureSource().contractDuration().sourceType(),
-                                request.phase2FeatureSource().contractDuration().observedAt()
-                        ),
-                        new BooleanFeatureSourceInput(
-                                request.phase2FeatureSource().incomeDeclaration().available(),
-                                request.phase2FeatureSource().incomeDeclaration().sourceReference(),
-                                request.phase2FeatureSource().incomeDeclaration().sourceType(),
-                                request.phase2FeatureSource().incomeDeclaration().observedAt()
-                        ),
-                        new IntegerFeatureSourceInput(
-                                request.phase2FeatureSource().telecomDelinquency().value(),
-                                request.phase2FeatureSource().telecomDelinquency().sourceReference(),
-                                request.phase2FeatureSource().telecomDelinquency().sourceType(),
-                                request.phase2FeatureSource().telecomDelinquency().observedAt()
-                        )
-                ),
+                phase2FeatureSource(request.phase2FeatureSource()),
                 request.riskSignalReferences()
+        );
+    }
+
+    private static Phase2FeatureSourceInput phase2FeatureSource(
+            LoanApplicationCreateRequest.Phase2FeatureSourceRequest request) {
+        if (request == null) {
+            return null;
+        }
+        return new Phase2FeatureSourceInput(
+                new DecimalFeatureSourceInput(
+                        request.platformSettlementVolatility().value(),
+                        request.platformSettlementVolatility().sourceReference(),
+                        request.platformSettlementVolatility().sourceType(),
+                        request.platformSettlementVolatility().observedAt()
+                ),
+                new IntegerFeatureSourceInput(
+                        request.contractDuration().value(),
+                        request.contractDuration().sourceReference(),
+                        request.contractDuration().sourceType(),
+                        request.contractDuration().observedAt()
+                ),
+                new BooleanFeatureSourceInput(
+                        request.incomeDeclaration().available(),
+                        request.incomeDeclaration().sourceReference(),
+                        request.incomeDeclaration().sourceType(),
+                        request.incomeDeclaration().observedAt()
+                ),
+                new IntegerFeatureSourceInput(
+                        request.telecomDelinquency().value(),
+                        request.telecomDelinquency().sourceReference(),
+                        request.telecomDelinquency().sourceType(),
+                        request.telecomDelinquency().observedAt()
+                )
         );
     }
 
