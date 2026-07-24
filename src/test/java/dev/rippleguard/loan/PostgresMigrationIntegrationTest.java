@@ -7,6 +7,7 @@ import javax.sql.DataSource;
 import dev.rippleguard.loan.application.ConflictException;
 import dev.rippleguard.loan.application.EventEnvelope;
 import dev.rippleguard.loan.application.FinancialSnapshotInput;
+import dev.rippleguard.loan.application.JsonSupport;
 import dev.rippleguard.loan.application.LoanApplicationService;
 import dev.rippleguard.loan.application.Phase2FeatureSnapshotService;
 import dev.rippleguard.loan.domain.LoanApplicationStatus;
@@ -89,6 +90,9 @@ class PostgresMigrationIntegrationTest {
 
     @Autowired
     ObjectMapper objectMapper;
+
+    @Autowired
+    JsonSupport json;
 
     @Autowired
     TransactionTemplate transactions;
@@ -252,6 +256,11 @@ class PostgresMigrationIntegrationTest {
         assertThat(second.featurePayloadDigest()).isEqualTo(first.featurePayloadDigest());
         assertThat(second.snapshotReference()).containsEntry("snapshotCreatedAt", second.createdAt().toString());
         assertThat(second.snapshotReference()).containsEntry("snapshotDigest", second.featurePayloadDigest());
+
+        Map<String, Object> payloadForDigest = new LinkedHashMap<>(second.featurePayload());
+        payloadForDigest.remove("featurePayloadDigest");
+        String recalculatedDigest = "sha256:" + json.sha256(json.canonicalJson(payloadForDigest));
+        assertThat(recalculatedDigest).isEqualTo(second.featurePayloadDigest());
     }
 
     @Test

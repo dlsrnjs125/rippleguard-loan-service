@@ -179,14 +179,16 @@ class LoanApplicationServiceIntegrationTest {
 
         var storedFirstSnapshot = featureSnapshots.get(created.applicationId(), "snapshot-v1");
         var secondSnapshot = featureSnapshots.get(created.applicationId(), "snapshot-v2");
+        assertThat(secondSnapshot.snapshotVersion()).isEqualTo("snapshot-v2");
         assertThat(storedFirstSnapshot.createdAt()).isEqualTo(firstSnapshot.createdAt());
         assertThat(storedFirstSnapshot.snapshotReference()).isEqualTo(firstSnapshot.snapshotReference());
         assertThat(secondSnapshot.snapshotReference())
                 .containsEntry("snapshotCreatedAt", secondSnapshot.createdAt().toString())
+                .containsEntry("snapshotVersion", "snapshot-v2")
                 .containsEntry("snapshotDigest", secondSnapshot.featurePayloadDigest());
         assertThat(storedFirstSnapshot.featurePayloadDigest()).isEqualTo(firstSnapshot.featurePayloadDigest());
         assertThat(secondSnapshot.featurePayloadDigest()).isNotEqualTo(firstSnapshot.featurePayloadDigest());
-        assertThat(secondSnapshot.createdAt()).isNotEqualTo(firstSnapshot.createdAt());
+        assertThat(secondSnapshot.snapshotReference()).isNotEqualTo(firstSnapshot.snapshotReference());
     }
 
     @Test
