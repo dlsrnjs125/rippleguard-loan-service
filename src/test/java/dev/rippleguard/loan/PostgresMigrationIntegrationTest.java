@@ -212,6 +212,46 @@ class PostgresMigrationIntegrationTest {
                 .map(dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotEntity.class::cast)
                 .map(dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotEntity::getFeaturePayloadDigest)
                 .distinct()).hasSize(1);
+        assertThat(results.stream()
+                .map(dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotEntity.class::cast)
+                .map(dev.rippleguard.loan.infrastructure.persistence.LoanFeatureSnapshotEntity::getCreatedAt)
+                .distinct()).hasSize(1);
+    }
+
+    @Test
+    void featureSnapshotCreatedAtMatchesPersistedSnapshotReferenceAtPostgresPrecision() throws Exception {
+        SnapshotFixture fixture = snapshotFixture("postgres-feature-created-at-identity");
+        FinancialSnapshotInput input = FinancialSnapshotInput.fromCreateRequest(
+                validRequest("postgres-feature-created-at-input", "25000000.00"));
+        Instant nanosecondTimestamp = Instant.parse("2026-07-23T04:22:23.741273875Z");
+
+        var created = featureSnapshotService.createIfSourcePresent(
+                fixture.application(), fixture.financialSnapshot(), input, nanosecondTimestamp).orElseThrow();
+        var reloaded = featureSnapshots.findByApplicationApplicationIdAndSnapshotVersion(
+                fixture.application().getApplicationId(), "snapshot-v1").orElseThrow();
+        var response = featureSnapshotService.get(fixture.application().getApplicationId(), "snapshot-v1");
+        Map<String, Object> snapshotReference = objectMapper.readValue(reloaded.getSnapshotReference(), Map.class);
+
+        assertThat(reloaded.getCreatedAt()).isEqualTo(created.getCreatedAt());
+        assertThat(response.createdAt()).isEqualTo(reloaded.getCreatedAt());
+        assertThat(snapshotReference).containsEntry("snapshotCreatedAt", reloaded.getCreatedAt().toString());
+        assertThat(response.snapshotReference()).containsEntry("snapshotCreatedAt", response.createdAt().toString());
+        assertThat(reloaded.getCreatedAt().getNano() % 1_000).isZero();
+        assertThat(reloaded.getCreatedAt()).isEqualTo(Instant.parse("2026-07-23T04:22:23.741273Z"));
+    }
+
+    @Test
+    void repeatedFeatureSnapshotReadsKeepCreatedAtReferenceAndDigestStable() {
+        LoanApplicationResponse created = service.create(validRequest("postgres-feature-read-stability", "25000000.00"));
+
+        var first = featureSnapshotService.get(created.applicationId(), "snapshot-v1");
+        var second = featureSnapshotService.get(created.applicationId(), "snapshot-v1");
+
+        assertThat(second.createdAt()).isEqualTo(first.createdAt());
+        assertThat(second.snapshotReference()).isEqualTo(first.snapshotReference());
+        assertThat(second.featurePayloadDigest()).isEqualTo(first.featurePayloadDigest());
+        assertThat(second.snapshotReference()).containsEntry("snapshotCreatedAt", second.createdAt().toString());
+        assertThat(second.snapshotReference()).containsEntry("snapshotDigest", second.featurePayloadDigest());
     }
 
     @Test
