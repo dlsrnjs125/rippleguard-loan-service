@@ -10,6 +10,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -98,6 +99,7 @@ public class Phase2FeatureSnapshotService {
 
     private PreparedSnapshot prepare(LoanApplicationEntity application, FinancialSnapshotEntity financialSnapshot,
                                      FinancialSnapshotInput input, Instant now) {
+        Instant snapshotCreatedAt = canonicalSnapshotCreatedAt(now);
         String snapshotVersion = financialSnapshot.getSnapshotVersion();
         Map<String, Object> featurePayloadWithoutDigest = featurePayloadWithoutDigest(input);
         String featurePayloadDigest = "sha256:" + json.sha256(json.canonicalJson(featurePayloadWithoutDigest));
@@ -111,7 +113,7 @@ public class Phase2FeatureSnapshotService {
         snapshotReference.put("snapshotId", snapshotId.toString());
         snapshotReference.put("snapshotVersion", snapshotVersion);
         snapshotReference.put("snapshotSchemaVersion", SNAPSHOT_SCHEMA_VERSION);
-        snapshotReference.put("snapshotCreatedAt", now.toString());
+        snapshotReference.put("snapshotCreatedAt", snapshotCreatedAt.toString());
         snapshotReference.put("digestAlgorithm", "sha256");
         snapshotReference.put("snapshotDigest", featurePayloadDigest);
         snapshotReference.put("snapshotReference",
@@ -125,7 +127,7 @@ public class Phase2FeatureSnapshotService {
                 json.canonicalJson(featurePayload),
                 featurePayloadDigest,
                 json.canonicalJson(snapshotReference),
-                now
+                snapshotCreatedAt
         );
     }
 
@@ -271,6 +273,10 @@ public class Phase2FeatureSnapshotService {
         } catch (SQLException exception) {
             throw new IllegalStateException("Unable to detect database product", exception);
         }
+    }
+
+    static Instant canonicalSnapshotCreatedAt(Instant value) {
+        return value.truncatedTo(ChronoUnit.MICROS);
     }
 
     private record PreparedSnapshot(UUID snapshotId, String snapshotVersion, String featurePayloadJson,

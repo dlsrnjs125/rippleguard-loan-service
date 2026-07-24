@@ -1,6 +1,7 @@
 package dev.rippleguard.loan.application;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -27,7 +28,8 @@ public class JsonSupport {
         try {
             JsonNode tree = sortObjectFields(objectMapper.valueToTree(value));
             ObjectMapper canonicalMapper = objectMapper.copy()
-                    .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
+                    .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
+                    .configure(JsonGenerator.Feature.WRITE_BIGDECIMAL_AS_PLAIN, true);
             return canonicalMapper.writeValueAsString(tree);
         } catch (JsonProcessingException exception) {
             throw new IllegalArgumentException("Unable to serialize JSON", exception);
